@@ -1,0 +1,23 @@
+repos:
+# ── generic housekeeping hooks ─────────────────────────────────────────
+- repo: https://github.com/pre-commit/pre-commit-hooks
+  rev: v5.0.0
+  hooks:
+    - id: check-toml
+    - id: check-symlinks
+    - id: check-merge-conflict
+    - id: check-case-conflict
+    - id: check-shebang-scripts-are-executable
+    - id: mixed-line-ending
+    - id: trailing-whitespace
+
+# ── Ruff: formatter  +  linter / import-sort / autofix ─────────────────
+- repo: https://github.com/astral-sh/ruff-pre-commit
+  rev: v0.5.0          # pin a known-good tag
+  hooks:
+    # “check + fix” pass (unused imports, isort, pyflakes, etc.)
+    - id: ruff
+      args: [ "--fix" ]
+
+    # Black-compatible formatter
+    - id: ruff-format

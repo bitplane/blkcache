@@ -1,0 +1,50 @@
+[project]
+name = "blkcache"
+description = "A block device cache in userspace"
+version = "0.0.1"
+authors = [
+    { name = "Gareth Davidson", email = "gaz@bitplane.net" }
+]
+readme = "README.md"
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "License :: Public Domain",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+]
+
+dependencies = [
+]
+
+[project.urls]
+Homepage = "https://github.com/bitplane/blkcache"
+"Bug Tracker" = "https://github.com/bitplane/blkcache/issues"
+"Source Code" = "https://github.com/bitplane/blkcache"
+
+[project.optional-dependencies]
+dev = [
+    "pre-commit",
+    "pytest",
+    "coverage",
+    "pytest-cov",
+    "pydoc-markdown",
+    "build",
+    "twine",
+    "ruff"
+]
+
+[build-system]
+requires = ["flit_core >=3.2,<4"]
+build-backend = "flit_core.buildapi"
+
+[project.scripts]
+blkcache = "blkcache.main:main"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+extend-include = ["*.ipynb"]
