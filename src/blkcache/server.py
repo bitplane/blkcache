@@ -50,11 +50,31 @@ def _workspace(log: logging.Logger):
         log.debug("workspace %s removed", tmp)
 
 
-def _wait(path: Path, log: logging.Logger, t: float = 10.0) -> None:
+def _wait(path: Path, log: logging.Logger, t: float = 10.0, process=None) -> None:
+    """Wait for a path to appear, with timeout."""
     end = time.time() + t
     while not path.exists():
+        # Check process status if available and debugging
+        if process and log.getEffectiveLevel() <= logging.DEBUG:
+            if process.poll() is not None:
+                log.debug("Process exited with code: %d", process.returncode)
+                if hasattr(process, "stderr") and hasattr(process, "stdout"):
+                    stderr = process.stderr.read() if process.stderr else ""
+                    stdout = process.stdout.read() if process.stdout else ""
+                    log.debug("Process stderr: %s", stderr)
+                    log.debug("Process stdout: %s", stdout)
+                break
+
         if time.time() > end:
+            # If we're timing out and have debug enabled, get process output
+            if process and log.getEffectiveLevel() <= logging.DEBUG:
+                if hasattr(process, "stderr") and hasattr(process, "stdout"):
+                    stderr = process.stderr.read() if process.stderr else ""
+                    stdout = process.stdout.read() if process.stdout else ""
+                    log.debug("Process stderr on timeout: %s", stderr)
+                    log.debug("Process stdout on timeout: %s", stdout)
             raise TimeoutError(f"timeout waiting for {path}")
+
         time.sleep(0.1)
     log.debug("ready: %s", path)
 
@@ -115,27 +135,47 @@ def serve(dev: Path, iso: Path, block: int, keep_cache: bool, log: logging.Logge
         if block is not None:
             cmd_args.append(f"block={block}")
 
-        nbdkit = subprocess.Popen(
-            cmd_args,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        log.info("Running nbdkit with command: %s", " ".join(cmd_args))
+
+        # Initialize nbdfuse to None to avoid UnboundLocalError
+        nbdfuse = None
+
+        # For DEBUG level, capture output; otherwise suppress it
+        if log.getEffectiveLevel() <= logging.DEBUG:
+            nbdkit = subprocess.Popen(
+                cmd_args,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,  # Get strings back instead of bytes
+            )
+        else:
+            nbdkit = subprocess.Popen(
+                cmd_args,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
 
         try:
-            _wait(sock, log)
+            _wait(sock, log, process=nbdkit)  # Pass nbdkit to _wait to check for errors
             uri = f"nbd+unix:///?socket={sock}"
 
             target = mnt / "disc.iso"
-            nbdfuse = subprocess.Popen(
-                ["nbdfuse", str(target), uri], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            )
+            # Capture nbdfuse output for debugging
+            if log.getEffectiveLevel() <= logging.DEBUG:
+                nbdfuse = subprocess.Popen(
+                    ["nbdfuse", str(target), uri], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+                )
+            else:
+                nbdfuse = subprocess.Popen(
+                    ["nbdfuse", str(target), uri], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
 
             # create dangling symlink immediately
             if iso.exists() or iso.is_symlink():
                 iso.unlink()
             iso.symlink_to(target)
 
-            _wait(target, log)  # FUSE file materialised
+            _wait(target, log, process=nbdfuse)  # FUSE file materialised, pass nbdfuse to check for errors
 
             # start watchdog
             stop_evt = threading.Event()
@@ -148,8 +188,9 @@ def serve(dev: Path, iso: Path, block: int, keep_cache: bool, log: logging.Logge
 
         finally:
             subprocess.call(["fusermount3", "-u", str(mnt)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            nbdfuse.terminate()
-            nbdfuse.wait()
+            if nbdfuse is not None:
+                nbdfuse.terminate()
+                nbdfuse.wait()
             nbdkit.terminate()
             nbdkit.wait()
             if not keep_cache:

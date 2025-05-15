@@ -48,11 +48,16 @@ def _open_log_file(mode="r"):
     if mode.startswith("r") and not log_path.exists():
         raise FileNotFoundError(f"Log file does not exist: {log_path}")
 
+    f = None
     try:
-        f = open(log_path, mode)
+        # Use Path.open() method instead of built-in open()
+        # Ensure we're using text mode
+        full_mode = mode + "t" if "t" not in mode and "b" not in mode else mode
+        f = log_path.open(mode=full_mode)
         yield f
     finally:
-        f.close()
+        if f is not None:
+            f.close()
 
 
 def _read_log_file(f):

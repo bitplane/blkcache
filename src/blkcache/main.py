@@ -3,6 +3,7 @@
 
 import argparse
 import logging
+import sys
 import time
 from pathlib import Path
 
@@ -39,8 +40,10 @@ def _wait_for_disc(dev: Path, log: logging.Logger) -> None:
 
 def main(argv=None) -> None:
     args = _parse(argv)
-    logging.basicConfig(level=args.log_level)
+    # Setup more detailed logging format for debugging
+    logging.basicConfig(level=args.log_level, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
     log = logging.getLogger("blkcache")
+    log.info("Starting blkcache with python: %s", sys.executable)
 
     dev = Path(args.device).resolve()
     iso = Path(args.iso).resolve()
