@@ -11,7 +11,13 @@ from . import server
 
 def _parse(argv=None) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="blkcache")
-    p.add_argument("-b", "--block-size", type=int, default=65_536)
+    p.add_argument(
+        "-b",
+        "--block-size",
+        type=int,
+        default=None,
+        help="Block size in bytes (default: auto-detect based on device type)",
+    )
     p.add_argument("-k", "--keep-cache", action="store_true", help="keep *.cache.<id>~ after exit")
     p.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     p.add_argument("device")  # /dev/sr0 …

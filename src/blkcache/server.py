@@ -97,20 +97,26 @@ def serve(dev: Path, iso: Path, block: int, keep_cache: bool, log: logging.Logge
     with _workspace(log) as (tmp, mnt):
         sock = tmp / "nbd.sock"
 
+        # Build nbdkit command arguments
+        cmd_args = [
+            "nbdkit",
+            "-v",
+            "--foreground",
+            "--exit-with-parent",
+            "--unix",
+            str(sock),
+            "python",
+            str(Path(__file__).with_name("plugin.py")),
+            f"device={dev}",
+            f"cache={cache}",
+        ]
+
+        # Add block size argument only if explicitly specified
+        if block is not None:
+            cmd_args.append(f"block={block}")
+
         nbdkit = subprocess.Popen(
-            [
-                "nbdkit",
-                "-v",
-                "--foreground",
-                "--exit-with-parent",
-                "--unix",
-                str(sock),
-                "python",
-                str(Path(__file__).with_name("plugin.py")),
-                f"device={dev}",
-                f"cache={cache}",
-                f"block={block}",
-            ],
+            cmd_args,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
