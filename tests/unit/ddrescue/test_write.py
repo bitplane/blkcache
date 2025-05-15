@@ -1,9 +1,10 @@
-"""Tests for writing ddrescue-compatible log files."""
+"""Tests for writing ddrescue-compatible mapfiles."""
 
 import io
 import pytest
 
-from blkcache.plugin import _write_log_file, STATUS_UNTRIED
+from blkcache.constants import STATUS_UNTRIED
+from blkcache.ddrescue_mapfile import write_mapfile
 
 
 @pytest.fixture
@@ -12,14 +13,14 @@ def output_file():
     return io.StringIO()
 
 
-def test_write_empty_log(output_file):
-    """Test writing an empty log file."""
+def test_write_empty_mapfile(output_file):
+    """Test writing an empty mapfile."""
     metadata = {"format_version": "1.0", "block_size": "2048"}
 
-    _write_log_file([], [], output_file, metadata)
+    write_mapfile([], [], output_file, metadata)
 
     result = output_file.getvalue()
-    assert "# Rescue Logfile. Created by blkcache\n" in result
+    assert "# Rescue Mapfile. Created by blkcache\n" in result
     assert "## blkcache: format_version=1.0\n" in result
     assert "## blkcache: block_size=2048\n" in result
     assert "# current_pos  current_status  current_pass\n" in result
@@ -27,18 +28,18 @@ def test_write_empty_log(output_file):
 
 
 def test_write_with_comments(output_file):
-    """Test writing a log file with existing comments."""
+    """Test writing a mapfile with existing comments."""
     metadata = {"format_version": "1.0", "block_size": "2048"}
 
     comments = [
-        "# Rescue Logfile. Created by ddrescue version 1.25",
+        "# Rescue Mapfile. Created by ddrescue version 1.25",
         "# Command: ddrescue /dev/sr0 image.iso rescue.log",
         "# current_pos  current_status  current_pass",
         "0x00000000    ?               1",
         "#      pos        size  status",
     ]
 
-    _write_log_file(comments, [], output_file, metadata)
+    write_mapfile(comments, [], output_file, metadata)
 
     result = output_file.getvalue()
     # Check that all comments are preserved
@@ -48,11 +49,11 @@ def test_write_with_comments(output_file):
     assert "## blkcache: format_version=1.0\n" in result
     assert "## blkcache: block_size=2048\n" in result
     # Default header should not be written since we have comments
-    assert result.count("# Rescue Logfile") == 1
+    assert result.count("# Rescue Mapfile") == 1
 
 
 def test_write_with_ranges(output_file):
-    """Test writing a log file with data ranges."""
+    """Test writing a mapfile with data ranges."""
     metadata = {"format_version": "1.0", "block_size": "2048"}
 
     ranges = [
@@ -61,7 +62,7 @@ def test_write_with_ranges(output_file):
         (0x00011000, 0x00012FFF, "?"),
     ]
 
-    _write_log_file([], ranges, output_file, metadata)
+    write_mapfile([], ranges, output_file, metadata)
 
     result = output_file.getvalue()
     # Ranges should be written in sorted order
@@ -70,19 +71,19 @@ def test_write_with_ranges(output_file):
     assert "0x00011000  0x00002000  ?\n" in result
 
 
-def test_write_complex_log(output_file):
-    """Test writing a complex log file with comments, metadata, and ranges."""
+def test_write_complex_mapfile(output_file):
+    """Test writing a complex mapfile with comments, metadata, and ranges."""
     metadata = {"format_version": "1.0", "block_size": "2048", "device_size": "104857600", "block_count": "51200"}
 
     comments = [
-        "# Rescue Logfile. Created by blkcache",
+        "# Rescue Mapfile. Created by blkcache",
         "# current_pos  current_status  current_pass",
         "0x00000000    ?               1",
     ]
 
     ranges = [(0x00000000, 0x0000FFFF, "+"), (0x00010000, 0x00010FFF, "-"), (0x00011000, 0x00012FFF, "?")]
 
-    _write_log_file(comments, ranges, output_file, metadata)
+    write_mapfile(comments, ranges, output_file, metadata)
 
     result = output_file.getvalue()
     # Check comments

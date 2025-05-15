@@ -1,9 +1,9 @@
-"""Tests for reading ddrescue-compatible log files."""
+"""Tests for reading ddrescue-compatible mapfiles."""
 
 import io
 import pytest
 
-from blkcache.plugin import _read_log_file
+from blkcache.ddrescue_mapfile import read_mapfile
 
 
 @pytest.fixture
@@ -16,7 +16,7 @@ def empty_file():
 def comments_only_file():
     """Fixture for a file with only comments."""
     data = (
-        "# Rescue Logfile. Created by ddrescue\n"
+        "# Rescue Mapfile. Created by ddrescue\n"
         "# Command: ddrescue /dev/sr0 image.iso\n"
         "# current_pos  current_status  current_pass\n"
         "0x00000000    ?               1\n"
@@ -29,7 +29,7 @@ def comments_only_file():
 def metadata_file():
     """Fixture for a file with blkcache metadata."""
     data = (
-        "# Rescue Logfile. Created by blkcache\n" "## blkcache: block_size=2048\n" "## blkcache: format_version=1.0\n"
+        "# Rescue Mapfile. Created by blkcache\n" "## blkcache: block_size=2048\n" "## blkcache: format_version=1.0\n"
     )
     return io.StringIO(data)
 
@@ -38,7 +38,7 @@ def metadata_file():
 def ranges_file():
     """Fixture for a file with data ranges."""
     data = (
-        "# Rescue Logfile.\n" "0x00000000  0x00010000  +\n" "0x00010000  0x00001000  -\n" "0x00011000  0x00002000  ?\n"
+        "# Rescue Mapfile.\n" "0x00000000  0x00010000  +\n" "0x00010000  0x00001000  -\n" "0x00011000  0x00002000  ?\n"
     )
     return io.StringIO(data)
 
@@ -47,7 +47,7 @@ def ranges_file():
 def complex_file():
     """Fixture for a complex file with comments, metadata, and ranges."""
     data = (
-        "# Rescue Logfile. Created by blkcache\n"
+        "# Rescue Mapfile. Created by blkcache\n"
         "# current_pos  current_status  current_pass\n"
         "0x00000000    ?               1\n"
         "## blkcache: block_size=2048\n"
@@ -62,32 +62,32 @@ def complex_file():
 
 
 def test_read_empty_file(empty_file):
-    """Test reading an empty log file."""
-    comments, metadata, ranges = _read_log_file(empty_file)
+    """Test reading an empty mapfile."""
+    comments, metadata, ranges = read_mapfile(empty_file)
     assert comments == []
     assert metadata == {}
     assert ranges == []
 
 
 def test_read_comments_only(comments_only_file):
-    """Test reading a log file with only comments."""
-    comments, metadata, ranges = _read_log_file(comments_only_file)
+    """Test reading a mapfile with only comments."""
+    comments, metadata, ranges = read_mapfile(comments_only_file)
     assert len(comments) == 4
     assert metadata == {}
     assert ranges == []
 
 
 def test_read_metadata(metadata_file):
-    """Test reading a log file with blkcache metadata."""
-    comments, metadata, ranges = _read_log_file(metadata_file)
+    """Test reading a mapfile with blkcache metadata."""
+    comments, metadata, ranges = read_mapfile(metadata_file)
     assert len(comments) == 1
     assert metadata == {"block_size": "2048", "format_version": "1.0"}
     assert ranges == []
 
 
 def test_read_ranges(ranges_file):
-    """Test reading a log file with data ranges."""
-    comments, metadata, ranges = _read_log_file(ranges_file)
+    """Test reading a mapfile with data ranges."""
+    comments, metadata, ranges = read_mapfile(ranges_file)
     assert len(comments) == 1
     assert metadata == {}
     assert len(ranges) == 3
@@ -101,8 +101,8 @@ def test_read_ranges(ranges_file):
 
 
 def test_read_complex_file(complex_file):
-    """Test reading a complex log file with comments, metadata, and ranges."""
-    comments, metadata, ranges = _read_log_file(complex_file)
+    """Test reading a complex mapfile with comments, metadata, and ranges."""
+    comments, metadata, ranges = read_mapfile(complex_file)
     assert len(comments) == 3
     assert metadata == {"block_size": "2048", "device_size": "104857600"}
     assert len(ranges) == 3

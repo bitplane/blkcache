@@ -13,7 +13,7 @@ import threading
 import time
 from pathlib import Path
 
-BLKGETSIZE64 = 0x80081272  # ioctl: get device byte-length
+from blkcache.constants import BLKGETSIZE64  # Use full package name for compatibility
 
 
 def _device_size(dev: Path) -> int:

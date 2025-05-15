@@ -2,7 +2,6 @@
 nbdkit Python plugin implementing a sparse on-disk cache.
 """
 
-import contextlib
 import errno
 import fcntl
 import os
@@ -10,22 +9,22 @@ import struct
 from collections import defaultdict
 from pathlib import Path
 
-# Linux ioctl constants
-BLKGETSIZE64 = 0x80081272  # <linux/fs.h>
-BLKSSZGET = 0x1268  # Get block device sector size
-CDROM_GET_BLKSIZE = 0x5313  # Get CDROM block size
+# Import constants using full package name for compatibility with nbdkit and pytest
+from blkcache.constants import (
+    BLKGETSIZE64,
+    BLKSSZGET,
+    CDROM_GET_BLKSIZE,
+    STATUS_UNTRIED,
+    DEFAULT_BLOCK_SIZE,
+    FORMAT_VERSION,
+)
 
-# Block status codes (ddrescue compatible)
-STATUS_OK = "+"  # Successfully read
-STATUS_ERROR = "-"  # Read error
-STATUS_UNTRIED = "?"  # Not tried yet
-STATUS_TRIMMED = "/"  # Trimmed (not tried because of read error)
-STATUS_SLOW = "*"  # Non-trimmed, non-scraped (slow reads)
-STATUS_SCRAPED = "#"  # Non-trimmed, scraped (slow reads completed)
+# Import mapfile utilities
+from blkcache.ddrescue_mapfile import open_mapfile, read_mapfile, write_mapfile
 
 DEV: Path | None = None
 CACHE: Path | None = None
-BLOCK = 2048  # Default block size
+BLOCK = DEFAULT_BLOCK_SIZE  # Use constant for default block size
 METADATA = {}
 BLOCK_STATUS = defaultdict(lambda: STATUS_UNTRIED)
 LOG_FILE = None
@@ -37,27 +36,12 @@ def _has_log():
     return log_path.exists()
 
 
-@contextlib.contextmanager
 def _open_log_file(mode="r"):
     """
     Simple context manager for opening the rescue log file.
     """
     log_path = CACHE.with_suffix(f"{CACHE.suffix}.log")
-
-    # Check if file exists when reading
-    if mode.startswith("r") and not log_path.exists():
-        raise FileNotFoundError(f"Log file does not exist: {log_path}")
-
-    f = None
-    try:
-        # Use Path.open() method instead of built-in open()
-        # Ensure we're using text mode
-        full_mode = mode + "t" if "t" not in mode and "b" not in mode else mode
-        f = log_path.open(mode=full_mode)
-        yield f
-    finally:
-        if f is not None:
-            f.close()
+    return open_mapfile(log_path, mode)
 
 
 def _read_log_file(f):
@@ -65,42 +49,10 @@ def _read_log_file(f):
     Read a ddrescue-compatible log file.
     Returns (comments, metadata, ranges) tuple.
     """
-    comments = []
-    ranges = []
-    metadata = {}
-
-    for line in f:
-        line = line.rstrip("\n")
-
-        # Process comments
-        if line.startswith("#"):
-            # Extract our metadata
-            if line.startswith("## blkcache:"):
-                meta_str = line[12:].strip()
-                if "=" in meta_str:
-                    k, v = meta_str.split("=", 1)
-                    metadata[k.strip()] = v.strip()
-            else:
-                comments.append(line)
-            continue
-
-        # Parse data lines: pos size status
-        parts = line.strip().split()
-        if len(parts) >= 3:
-            try:
-                start = int(parts[0], 16)
-                size = int(parts[1], 16)
-                status = parts[2]
-                end = start + size - 1
-                ranges.append((start, end, status))
-            except ValueError:
-                # Skip malformed lines
-                pass
-
-    return comments, metadata, ranges
+    return read_mapfile(f)
 
 
-def _write_log_file(comments, ranges, f, meta=METADATA):
+def _write_log_file(comments, ranges, f, meta=None):
     """
     Write the ddrescue-compatible log file to disk.
 
@@ -110,26 +62,9 @@ def _write_log_file(comments, ranges, f, meta=METADATA):
         f: File-like object to write to
         meta: Metadata dictionary (defaults to global METADATA)
     """
-    # Write original comments
-    for comment in comments:
-        f.write(f"{comment}\n")
-
-    # Write our metadata as separate lines
-    for key, value in meta.items():
-        f.write(f"## blkcache: {key}={value}\n")
-
-    # Write a default header if no comments
-    if not comments:
-        f.write("# Rescue Logfile. Created by blkcache\n")
-        f.write("# current_pos  current_status  current_pass\n")
-        f.write(f"0x00000000    {STATUS_UNTRIED}               1\n")
-        f.write("#      pos        size  status\n")
-
-    # Write ranges in sorted order
-    sorted_ranges = sorted(ranges)
-    for start, end, status in sorted_ranges:
-        size = end - start + 1
-        f.write(f"0x{start:08x}  0x{size:08x}  {status}\n")
+    # Use global METADATA if meta not provided
+    meta = meta if meta is not None else METADATA
+    write_mapfile(comments, ranges, f, meta)
 
 
 def _determine_block_size(device, current_block_size, metadata):
@@ -186,7 +121,7 @@ def _get_sector_size(dev: Path) -> int:
                 except IOError:
                     # Default sizes based on device name pattern
                     if "sr" in str(dev) or "cd" in str(dev):
-                        return 2048  # Default CD/DVD sector size
+                        return DEFAULT_BLOCK_SIZE  # Default CD/DVD sector size
                     return 512  # Default for most other devices
     except OSError:
         # Fallback if we can't open the device
@@ -254,7 +189,7 @@ def config_complete() -> None:
 
     # Add default metadata
     if "format_version" not in METADATA:
-        METADATA["format_version"] = "1.0"
+        METADATA["format_version"] = FORMAT_VERSION
 
     # Initialize block status from ranges
     for start, end, status in ranges:
