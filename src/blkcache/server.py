@@ -1,31 +1,16 @@
 """blkcache.server – userspace read-through cache via nbdkit + nbdfuse."""
 
 import contextlib
-import fcntl
 import hashlib
 import logging
-import os
 import shutil
-import struct
 import subprocess
 import tempfile
 import threading
 import time
 from pathlib import Path
 
-from blkcache.constants import BLKGETSIZE64  # Use full package name for compatibility
-
-
-def _device_size(dev: Path) -> int:
-    try:
-        with dev.open("rb") as fh:
-            val = struct.unpack("Q", fcntl.ioctl(fh, BLKGETSIZE64, b"\0" * 8))[0]
-            if val:
-                return val
-    except OSError:
-        pass
-    sys_sz = Path(f"/sys/class/block/{dev.name}/size")
-    return int(sys_sz.read_text()) * 512 if sys_sz.exists() else os.stat(dev).st_size
+from blkcache.device import get_device_size
 
 
 def _disc_id(dev: Path, head: int = 65_536) -> str:
@@ -112,7 +97,7 @@ def serve(dev: Path, iso: Path, block: int, keep_cache: bool, log: logging.Logge
     cache = _cache_name(iso, disc)
     if not cache.exists():
         with cache.open("wb") as fh:
-            fh.truncate(_device_size(dev))
+            fh.truncate(get_device_size(dev))
 
     with _workspace(log) as (tmp, mnt):
         sock = tmp / "nbd.sock"

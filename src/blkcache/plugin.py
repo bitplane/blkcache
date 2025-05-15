@@ -1,144 +1,35 @@
 """
-nbdkit Python plugin implementing a sparse on-disk cache.
+nbdkit Python plugin integration for block-level device caching.
 """
 
-import errno
-import fcntl
-import os
-import struct
-from collections import defaultdict
 from pathlib import Path
+from collections import defaultdict
 
 # Import constants using full package name for compatibility with nbdkit and pytest
 from blkcache.constants import (
-    BLKGETSIZE64,
-    BLKSSZGET,
-    CDROM_GET_BLKSIZE,
     STATUS_UNTRIED,
     DEFAULT_BLOCK_SIZE,
-    FORMAT_VERSION,
 )
 
-# Import mapfile utilities
-from blkcache.ddrescue_mapfile import open_mapfile, read_mapfile, write_mapfile
+# Import BlockCache class
+from blkcache.cache.cache import BlockCache
 
+# Global state
 DEV: Path | None = None
 CACHE: Path | None = None
 BLOCK = DEFAULT_BLOCK_SIZE  # Use constant for default block size
 METADATA = {}
 BLOCK_STATUS = defaultdict(lambda: STATUS_UNTRIED)
-LOG_FILE = None
+
+# Cache instance - will be created in config_complete
+CACHE_INSTANCE = None
 
 
-def _has_log():
-    """Check if a log file exists for the current cache."""
-    log_path = CACHE.with_suffix(f"{CACHE.suffix}.log")
-    return log_path.exists()
-
-
-def _open_log_file(mode="r"):
-    """
-    Simple context manager for opening the rescue log file.
-    """
-    log_path = CACHE.with_suffix(f"{CACHE.suffix}.log")
-    return open_mapfile(log_path, mode)
-
-
-def _read_log_file(f):
-    """
-    Read a ddrescue-compatible log file.
-    Returns (comments, metadata, ranges) tuple.
-    """
-    return read_mapfile(f)
-
-
-def _write_log_file(comments, ranges, f, meta=None):
-    """
-    Write the ddrescue-compatible log file to disk.
-
-    Args:
-        comments: List of comment lines
-        ranges: List of (start, end, status) tuples
-        f: File-like object to write to
-        meta: Metadata dictionary (defaults to global METADATA)
-    """
-    # Use global METADATA if meta not provided
-    meta = meta if meta is not None else METADATA
-    write_mapfile(comments, ranges, f, meta)
-
-
-def _determine_block_size(device, current_block_size, metadata):
-    """
-    Determine the appropriate block size to use based on device characteristics and metadata.
-
-    Args:
-        device: The device to read block size from
-        current_block_size: The current block size setting
-        metadata: Metadata dict which may contain block_size or block settings
-
-    Returns:
-        Tuple of (block_size, metadata_updates) where:
-            block_size: The determined block size to use
-            metadata_updates: Dict of metadata values to update
-    """
-    metadata_updates = {}
-
-    # If block size is already specified, use that
-    if "block" in metadata or "block_size" in metadata:
-        # Use the block_size from metadata if available
-        if "block_size" in metadata:
-            block_size = int(metadata["block_size"])
-        else:
-            # Otherwise keep current block size
-            block_size = current_block_size
-
-        metadata_updates["block_size_source"] = "manual"
-        return block_size, metadata_updates
-
-    # Otherwise try to auto-detect from device
-    try:
-        detected_size = _get_sector_size(device)
-        metadata_updates["block_size"] = str(detected_size)
-        metadata_updates["block_size_source"] = "auto"
-        return detected_size, metadata_updates
-    except Exception as e:
-        # On failure, keep the current block size and record the error
-        metadata_updates["block_size_source"] = f"default ({str(e)})"
-        return current_block_size, metadata_updates
-
-
-def _get_sector_size(dev: Path) -> int:
-    """Detect the physical sector size of a block device."""
-    try:
-        with dev.open("rb") as fh:
-            # Try BLKSSZGET ioctl (works for most block devices)
-            try:
-                return struct.unpack("I", fcntl.ioctl(fh, BLKSSZGET, b"\0" * 4))[0]
-            except IOError:
-                # Try CDROM_GET_BLKSIZE for optical media
-                try:
-                    return struct.unpack("I", fcntl.ioctl(fh, CDROM_GET_BLKSIZE, b"\0" * 4))[0]
-                except IOError:
-                    # Default sizes based on device name pattern
-                    if "sr" in str(dev) or "cd" in str(dev):
-                        return DEFAULT_BLOCK_SIZE  # Default CD/DVD sector size
-                    return 512  # Default for most other devices
-    except OSError:
-        # Fallback if we can't open the device
-        return 512  # Default to 512 bytes (common for hard disks)
-
-
-def _size(dev: Path) -> int:
-    """Get the total size of a device in bytes."""
-    try:
-        with dev.open("rb") as fh:
-            return struct.unpack("Q", fcntl.ioctl(fh, BLKGETSIZE64, b"\0" * 8))[0]
-    except OSError:
-        return os.stat(dev).st_size
+# These functions are now handled by the BlockCache class
 
 
 def config(key: str, val: str) -> None:
-    """Configure the plugin with parameters passed from nbdkit."""
+    """Stores device, cache paths and parses metadata key-value pairs."""
     global DEV, CACHE, BLOCK, METADATA
 
     if key == "device":
@@ -159,106 +50,76 @@ def config(key: str, val: str) -> None:
 
 
 def config_complete() -> None:
-    """Validate configuration and set defaults once all config options are received."""
-    global DEV, CACHE, BLOCK, METADATA, BLOCK_STATUS
+    """Validates required parameters and initializes the cache implementation."""
+    global DEV, CACHE, BLOCK, METADATA, BLOCK_STATUS, CACHE_INSTANCE
 
     if DEV is None or CACHE is None:
         raise RuntimeError("device= and cache= are required")
 
-    # Load existing log file if available
-    if _has_log():
-        with _open_log_file("r") as f:
-            comments, log_metadata, ranges = _read_log_file(f)
-    else:
-        comments = []
-        log_metadata = {}
-        ranges = []
+    # Create a BlockCache instance
+    CACHE_INSTANCE = BlockCache(
+        device_path=DEV, cache_path=CACHE, block_size=BLOCK if BLOCK != DEFAULT_BLOCK_SIZE else None
+    )
 
-    # Merge metadata from log file with our current metadata
-    # (current settings take precedence)
-    for k, v in log_metadata.items():
-        if k not in METADATA:
-            METADATA[k] = v
+    # The BlockCache initialization will handle:
+    # - Loading the mapfile if it exists
+    # - Determining the appropriate block size
+    # - Creating the cache file if needed
 
-    # Determine the appropriate block size
-    block_size, metadata_updates = _determine_block_size(device=DEV, current_block_size=BLOCK, metadata=METADATA)
-
-    # Update globals with the results
-    BLOCK = block_size
-    METADATA.update(metadata_updates)
-
-    # Add default metadata
-    if "format_version" not in METADATA:
-        METADATA["format_version"] = FORMAT_VERSION
-
-    # Initialize block status from ranges
-    for start, end, status in ranges:
-        block_start = start // BLOCK
-        block_end = end // BLOCK
-        for block_num in range(block_start, block_end + 1):
-            BLOCK_STATUS[block_num] = status
-
-    # Write initial log file with merged metadata
-    with _open_log_file("w") as f:
-        _write_log_file(comments, ranges, f)
+    # Keep using the legacy variables for now to minimize changes
+    BLOCK = CACHE_INSTANCE.block_size
+    METADATA = CACHE_INSTANCE.metadata
+    BLOCK_STATUS = CACHE_INSTANCE.block_status
 
 
 def open(_readonly: bool) -> dict[str, int]:
-    """Initialize the plugin when nbdkit opens the device."""
-    # Get the device size for later use
-    device_size = _size(DEV)
-
-    # Add device size to metadata
-    METADATA["device_size"] = str(device_size)
-    METADATA["block_count"] = str((device_size + BLOCK - 1) // BLOCK)
-
-    return {"size": device_size}
+    """Creates device handle via the cache implementation."""
+    # Use our cache instance to open the device
+    return CACHE_INSTANCE.open(_readonly)
 
 
 def get_size(h) -> int:
-    return h["size"]
-
-
-def _sector(num: int) -> bytes:
-    """
-    Get a block-sized chunk of data containing the requested sector.
-    Always reads and caches full blocks to ensure data consistency.
-    """
-    off = num * BLOCK
-    # Check if the block is already cached
-    with CACHE.open("r+b") as c:
-        c.seek(off)
-        data = c.read(BLOCK)
-        if len(data) > 0 and any(data):
-            return data
-
-    # Read from the device
-    with DEV.open("rb") as d:
-        # Get device size to check if we're at the end
-        device_size = _size(DEV)
-        d.seek(off)
-        data = d.read(BLOCK)
-
-        # No data at all is an error
-        if not data:
-            raise OSError(errno.EIO, "short read")
-
-        # If it's a partial read but not at end of device, it's an error
-        if len(data) < BLOCK and off + len(data) < device_size:
-            raise OSError(errno.EIO, f"short read ({len(data)} < {BLOCK})")
-
-    # Write to cache exactly what we read
-    with CACHE.open("r+b") as c:
-        c.seek(off)
-        c.write(data)
-
-    return data
+    return CACHE_INSTANCE.get_size(h)
 
 
 def pread(h, count: int, offset: int) -> bytes:
-    first, last = offset // BLOCK, (offset + count - 1) // BLOCK
-    blob = b"".join(_sector(i) for i in range(first, last + 1))
-    start = offset % BLOCK
-    stop = start + count
+    return CACHE_INSTANCE.pread(h, count, offset)
 
-    return blob[start:stop]
+
+# Add close function to save the mapfile when closing
+def close(h) -> None:
+    """Saves mapfile before closing."""
+    CACHE_INSTANCE.close(h)
+
+
+# Optional capability functions - delegate to cache instance
+def can_write(h) -> bool:
+    return CACHE_INSTANCE.can_write(h)
+
+
+def can_flush(h) -> bool:
+    return CACHE_INSTANCE.can_flush(h)
+
+
+def can_trim(h) -> bool:
+    return CACHE_INSTANCE.can_trim(h)
+
+
+def can_zero(h) -> bool:
+    return CACHE_INSTANCE.can_zero(h)
+
+
+def can_fast_zero(h) -> bool:
+    return CACHE_INSTANCE.can_fast_zero(h)
+
+
+def can_extents(h) -> bool:
+    return CACHE_INSTANCE.can_extents(h)
+
+
+def is_rotational(h) -> bool:
+    return CACHE_INSTANCE.is_rotational(h)
+
+
+def can_multi_conn(h) -> bool:
+    return CACHE_INSTANCE.can_multi_conn(h)
