@@ -2,4 +2,5 @@
 
 source .venv/bin/activate
 
-pytest --cov="src/$1" --cov-report=html .
+# Run pytest with both terminal and HTML coverage reports
+pytest --cov="src/$1" --cov-report=term --cov-report=html .

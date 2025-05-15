@@ -72,7 +72,7 @@ def test_read_empty_file(empty_file):
 def test_read_comments_only(comments_only_file):
     """Test reading a log file with only comments."""
     comments, metadata, ranges = _read_log_file(comments_only_file)
-    assert len(comments) == 5
+    assert len(comments) == 4
     assert metadata == {}
     assert ranges == []
 

@@ -127,6 +127,46 @@ def _write_log_file(comments, ranges, f, meta=METADATA):
         f.write(f"0x{start:08x}  0x{size:08x}  {status}\n")
 
 
+def _determine_block_size(device, current_block_size, metadata):
+    """
+    Determine the appropriate block size to use based on device characteristics and metadata.
+
+    Args:
+        device: The device to read block size from
+        current_block_size: The current block size setting
+        metadata: Metadata dict which may contain block_size or block settings
+
+    Returns:
+        Tuple of (block_size, metadata_updates) where:
+            block_size: The determined block size to use
+            metadata_updates: Dict of metadata values to update
+    """
+    metadata_updates = {}
+
+    # If block size is already specified, use that
+    if "block" in metadata or "block_size" in metadata:
+        # Use the block_size from metadata if available
+        if "block_size" in metadata:
+            block_size = int(metadata["block_size"])
+        else:
+            # Otherwise keep current block size
+            block_size = current_block_size
+
+        metadata_updates["block_size_source"] = "manual"
+        return block_size, metadata_updates
+
+    # Otherwise try to auto-detect from device
+    try:
+        detected_size = _get_sector_size(device)
+        metadata_updates["block_size"] = str(detected_size)
+        metadata_updates["block_size_source"] = "auto"
+        return detected_size, metadata_updates
+    except Exception as e:
+        # On failure, keep the current block size and record the error
+        metadata_updates["block_size_source"] = f"default ({str(e)})"
+        return current_block_size, metadata_updates
+
+
 def _get_sector_size(dev: Path) -> int:
     """Detect the physical sector size of a block device."""
     try:
@@ -200,28 +240,12 @@ def config_complete() -> None:
         if k not in METADATA:
             METADATA[k] = v
 
-    #
-    # todo: move to a function and make testable
-    #
+    # Determine the appropriate block size
+    block_size, metadata_updates = _determine_block_size(device=DEV, current_block_size=BLOCK, metadata=METADATA)
 
-    # If block size wasn't explicitly set, auto-detect from device
-    if "block" not in METADATA and "block_size" not in METADATA:
-        try:
-            detected_size = _get_sector_size(DEV)
-            BLOCK = detected_size
-            METADATA["block_size"] = str(detected_size)
-            METADATA["block_size_source"] = "auto"
-        except Exception as e:
-            METADATA["block_size_source"] = f"default ({str(e)})"
-    else:
-        # Override BLOCK from metadata if available
-        if "block_size" in METADATA:
-            BLOCK = int(METADATA["block_size"])
-        METADATA["block_size_source"] = "manual"
-
-    #
-    # /todo
-    #
+    # Update globals with the results
+    BLOCK = block_size
+    METADATA.update(metadata_updates)
 
     # Add default metadata
     if "format_version" not in METADATA:
