@@ -64,28 +64,21 @@ class DiskMap:
                 if not line:
                     continue
 
-                if line.startswith("# "):
-                    # Skip specific header comment lines
+                if line.startswith("## blkcache:"):
+                    # Process blkcache config comments - no try/except, let errors bubble up
+                    config_line = line[12:].strip()
+                    key, value = config_line.split("=", 1)
+                    self.config[key.strip()] = value.strip()
+                
+                elif line.startswith("#"):
+                    # Skip comment headers we'll regenerate
                     if "current_pos" in line and "current_status" in line and "current_pass" in line:
                         continue
                     if " pos " in line and " size " in line and " status" in line:
                         continue
-
-                    # Store the full comment line
+                    
+                    # Store all other comment lines
                     self.comments.append(line)
-
-                elif line.startswith("## blkcache:"):
-                    # Process blkcache config comments
-                    try:
-                        config_line = line[12:].strip()
-                        key, value = config_line.split("=", 1)
-                        self.config[key.strip()] = value.strip()
-                    except ValueError:
-                        pass  # Ignore malformed config lines
-
-                elif line.startswith("#"):
-                    # Skip other comment lines
-                    continue
 
                 elif not current_pos_line_found and len(line.split()) >= 3:
                     # First non-comment, non-config line is the current_pos line
