@@ -49,20 +49,38 @@ def get_size(h) -> int:
 
 
 def _sector(num: int) -> bytes:
+    """
+    Get a block-sized chunk of data containing the requested sector.
+    Always reads and caches full blocks to ensure data consistency.
+    """
     off = num * BLOCK
+    # Check if the block is already cached
     with CACHE.open("r+b") as c:
         c.seek(off)
         data = c.read(BLOCK)
-        if len(data) == BLOCK and any(data):
+        if len(data) > 0 and any(data):
             return data
+
+    # Read from the device
     with DEV.open("rb") as d:
+        # Get device size to check if we're at the end
+        device_size = _size(DEV)
         d.seek(off)
         data = d.read(BLOCK)
+
+        # No data at all is an error
         if not data:
             raise OSError(errno.EIO, "short read")
+
+        # If it's a partial read but not at end of device, it's an error
+        if len(data) < BLOCK and off + len(data) < device_size:
+            raise OSError(errno.EIO, f"short read ({len(data)} < {BLOCK})")
+
+    # Write to cache exactly what we read
     with CACHE.open("r+b") as c:
         c.seek(off)
         c.write(data)
+
     return data
 
 
