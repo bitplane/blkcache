@@ -5,7 +5,7 @@ This module defines the interface that all cache implementations must follow.
 """
 
 from typing import Any, Dict
-from device import is_rotational
+from ..device import is_rotational
 
 
 class Cache:
@@ -38,9 +38,7 @@ class Cache:
 
     def close(self, handle: Dict[str, Any]) -> None:
         """Closes connections and flushes pending data. Must be implemented by subclasses."""
-        # WRONG! SUBCLASSES THAT DON'T IMPLEMENT THIS MUST CRASH
-        # BECAUSE THEY WILL LEAK FILE HANDLES OTHERWISE
-        pass
+        raise NotImplementedError("Subclasses must implement close()")
 
     # Optional capability methods - all return False by default
 

@@ -11,8 +11,8 @@ from blkcache.constants import (
     DEFAULT_BLOCK_SIZE,
 )
 
-# Import BlockCache class
-from blkcache.cache.cache import BlockCache
+# Import Cache class
+from blkcache.cache.cache import Cache
 
 # Global state
 DEV: Path | None = None
