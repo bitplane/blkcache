@@ -38,6 +38,7 @@ class DiskMap:
         self.config["device_size"] = str(size)
 
         # State tracking
+        self.size = size
         self.current_pass = 1
         self.current_status = STATUS_UNTRIED
         self.current_pos = 0
@@ -56,7 +57,6 @@ class DiskMap:
         """Read and parse a ddrescue mapfile."""
         self.comments = []
         self.config = {}
-        self.transitions = []
         current_pos_line_found = False
 
         with self.map_path.open("r") as file:
@@ -147,20 +147,23 @@ class DiskMap:
         """Set the status for a range of blocks."""
 
         start_key = (start, NO_SORT, status)
-        end_key = (end + 1, NO_SORT, status)
+        end_key = (end + 1, NO_SORT, STATUS_UNTRIED)
 
-        start_idx = bisect.bisect_left(positions, start_key)
-        end_idx = bisect.bisect_right(
-            positions,
-        )
+        start_idx = bisect.bisect_left(self.transitions, start_key)
+        end_idx = min(bisect.bisect_right(self.transitions, end_key), len(self.transitions) - 1)
 
-        before_idx = start_idx - 1 if self.transitions[start_idx][0] == start else 0
-        after_idx = end_idx + 1 if self.transitions[end_idx][0] == end + 1 else 0
-        before_idx = min(max(before_idx, 0), size)
-        after_idx = min(max(after_idx, 0), size)
-        keep_start = start == 0
-        keep_end = end == self.size
-        splice = []
+        before_idx = 0 if self.transitions[start_idx][0] == start else start_idx - 1
+        after_idx = end_idx if self.transitions[end_idx][0] == end + 1 else end_idx + 1
+        before_idx = min(max(before_idx, 0), len(self.transitions) - 1)
+        after_idx = min(max(after_idx, 0), len(self.transitions) - 1)
+        after_status = self.transitions[after_idx][2]
 
-        # todo:
-        self.transitions[before_idx:after_idx] = []
+        mix = {
+            self.transitions[before_idx][0]: self.transitions[before_idx],
+            start: start_key,
+            self.transitions[after_idx][0]: self.transitions[after_idx],
+            end: (end + 1, NO_SORT, after_status),
+        }
+
+        splice = sorted(list(mix.values()))
+        self.transitions[before_idx:after_idx] = splice
