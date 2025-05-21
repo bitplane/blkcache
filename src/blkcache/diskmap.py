@@ -59,6 +59,9 @@ class DiskMap:
         self.config = {}
         current_pos_line_found = False
 
+        # Reset transitions to initial state before reading
+        self.transitions = [(0, NO_SORT, STATUS_UNTRIED), (self.size, NO_SORT, STATUS_UNTRIED)]
+
         with self.map_path.open("r") as file:
             for line in file:
                 line = line.strip()
@@ -96,6 +99,10 @@ class DiskMap:
                 else:
                     # Process normal data lines
                     self._process_data_line(line)
+
+        # Ensure we always have the final boundary transition
+        if not self.transitions or self.transitions[-1][0] != self.size:
+            self.transitions.append((self.size, NO_SORT, STATUS_UNTRIED))
 
     def _process_data_line(self, line: str) -> None:
         """Process a data line with pos/size/status format."""
@@ -162,11 +169,15 @@ class DiskMap:
         before_idx = max(start_idx - 1, 0)
         after_idx = min(end_idx, len(self.transitions) - 1)
 
-        # Get the status that should follow our range
-        before_status = self.transitions[before_idx][2]
-        before_pos = self.transitions[before_idx][0]
-        after_status = self.transitions[after_idx][2]
-        after_pos = self.transitions[after_idx][0]
+        # Get the 5 variables we need
+        before_status = self.transitions[before_idx][2]  # before_start.status
+        before_pos = self.transitions[before_idx][0]  # before_start.pos
+        after_status = self.transitions[after_idx][2]  # after.status
+        after_pos = self.transitions[after_idx][0]  # after.pos
+
+        # Find before_end: what status exists at end+1 position before our change
+        before_end_idx = max(0, end_idx - 1)
+        before_end_status = self.transitions[before_end_idx][2]
 
         splice = []
         if before_pos == start:
@@ -178,8 +189,8 @@ class DiskMap:
                 # if the status is different, we need to add a new entry
                 splice.append(start_key)
 
-        if after_status != status:
-            splice.append((end + 1, NO_SORT, after_status))
+        if before_end_status != status:
+            splice.append((end + 1, NO_SORT, before_end_status))
         if end + 1 < after_pos:
             splice.append((after_pos, NO_SORT, after_status))
 
