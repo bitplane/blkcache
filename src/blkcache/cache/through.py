@@ -29,7 +29,10 @@ class BlockCache(Cache):
         # WRONG: WE HAVE A FUNCTION TO DO THIS DON'T GUESS
         self.block_size = config.get("block_size") or DEFAULT_BLOCK_SIZE
         self.map_path = self.cache.with_suffix(f"{self.cache.suffix}.log")
-        self.diskmap = DiskMap(self.map_path)
+
+        # Get device size for DiskMap
+        device_size = get_device_size(self.device)
+        self.diskmap = DiskMap(self.map_path, device_size)
 
         # Initialize cache
         self._initialize()

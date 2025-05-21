@@ -3,23 +3,20 @@ nbdkit Python plugin integration for block-level device caching.
 """
 
 from pathlib import Path
-from collections import defaultdict
 
 # Import constants using full package name for compatibility with nbdkit and pytest
 from blkcache.constants import (
-    STATUS_UNTRIED,
     DEFAULT_BLOCK_SIZE,
 )
 
-# Import Cache class
-from blkcache.cache.cache import Cache
+# Import BlockCache class
+from blkcache.cache.through import BlockCache
 
 # Global state
 DEV: Path | None = None
 CACHE: Path | None = None
 BLOCK = DEFAULT_BLOCK_SIZE  # Use constant for default block size
 METADATA = {}
-BLOCK_STATUS = defaultdict(lambda: STATUS_UNTRIED)
 
 # Cache instance - will be created in config_complete
 CACHE_INSTANCE = None
@@ -51,15 +48,14 @@ def config(key: str, val: str) -> None:
 
 def config_complete() -> None:
     """Validates required parameters and initializes the cache implementation."""
-    global DEV, CACHE, BLOCK, METADATA, BLOCK_STATUS, CACHE_INSTANCE
+    global DEV, CACHE, BLOCK, METADATA, CACHE_INSTANCE
 
     if DEV is None or CACHE is None:
         raise RuntimeError("device= and cache= are required")
 
     # Create a BlockCache instance
-    CACHE_INSTANCE = BlockCache(
-        device_path=DEV, cache_path=CACHE, block_size=BLOCK if BLOCK != DEFAULT_BLOCK_SIZE else None
-    )
+    config = {"device_path": DEV, "cache_path": CACHE, "block_size": BLOCK if BLOCK != DEFAULT_BLOCK_SIZE else None}
+    CACHE_INSTANCE = BlockCache(config)
 
     # The BlockCache initialization will handle:
     # - Loading the mapfile if it exists
@@ -68,8 +64,7 @@ def config_complete() -> None:
 
     # Keep using the legacy variables for now to minimize changes
     BLOCK = CACHE_INSTANCE.block_size
-    METADATA = CACHE_INSTANCE.metadata
-    BLOCK_STATUS = CACHE_INSTANCE.block_status
+    METADATA = CACHE_INSTANCE.diskmap.config
 
 
 def open(_readonly: bool) -> dict[str, int]:

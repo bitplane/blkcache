@@ -64,7 +64,6 @@ def test_auto_detection_failure(mock_get_sector_size):
     assert error_msg in updates["block_size_source"]
 
 
-
 def testdetermine_block_size_with_auto_detect():
     """When auto-detection succeeds, the detected size should be used."""
     # We'll test the higher-level determine_block_size function instead
