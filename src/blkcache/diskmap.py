@@ -145,25 +145,42 @@ class DiskMap:
 
     def set_status(self, start: int, end: int, status: str) -> None:
         """Set the status for a range of blocks."""
+        # Input validation
+        if start < 0 or end >= self.size:
+            raise ValueError(f"Range [{start}, {end}] is outside of device range [0, {self.size - 1}]")
+        if start > end:
+            raise ValueError(f"Invalid range: start ({start}) > end ({end})")
 
         start_key = (start, NO_SORT, status)
         end_key = (end + 1, NO_SORT, STATUS_UNTRIED)
 
+        # Find indices using binary search
         start_idx = bisect.bisect_left(self.transitions, start_key)
-        end_idx = min(bisect.bisect_right(self.transitions, end_key), len(self.transitions) - 1)
+        end_idx = bisect.bisect_right(self.transitions, end_key)
 
-        before_idx = 0 if self.transitions[start_idx][0] == start else start_idx - 1
-        after_idx = end_idx if self.transitions[end_idx][0] == end + 1 else end_idx + 1
-        before_idx = min(max(before_idx, 0), len(self.transitions) - 1)
-        after_idx = min(max(after_idx, 0), len(self.transitions) - 1)
+        # Determine before and after indices
+        before_idx = max(start_idx - 1, 0)
+        after_idx = min(end_idx, len(self.transitions) - 1)
+
+        # Get the status that should follow our range
+        before_status = self.transitions[before_idx][2]
+        before_pos = self.transitions[before_idx][0]
         after_status = self.transitions[after_idx][2]
+        after_pos = self.transitions[after_idx][0]
 
-        mix = {
-            self.transitions[before_idx][0]: self.transitions[before_idx],
-            start: start_key,
-            self.transitions[after_idx][0]: self.transitions[after_idx],
-            end: (end + 1, NO_SORT, after_status),
-        }
+        splice = []
+        if before_pos == start:
+            # overwrite the start position
+            splice.append(start_key)
+        else:
+            splice.append((before_pos, NO_SORT, before_status))
+            if before_status != status:
+                # if the status is different, we need to add a new entry
+                splice.append(start_key)
 
-        splice = sorted(list(mix.values()))
-        self.transitions[before_idx:after_idx] = splice
+        if after_status != status:
+            splice.append((end + 1, NO_SORT, after_status))
+        if end + 1 < after_pos:
+            splice.append((after_pos, NO_SORT, after_status))
+
+        self.transitions[before_idx : after_idx + 1] = splice
