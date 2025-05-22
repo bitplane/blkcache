@@ -92,7 +92,7 @@ def _watch_disc(dev: Path, orig_id: str, orig_mtime: float, stop: threading.Even
         time.sleep(1)
 
 
-def serve(dev: Path, iso: Path, block: int, keep_cache: bool, log: logging.Logger) -> None:
+def serve(dev: Path, iso: Path, block: int, keep_cache: bool, log: logging.Logger, shutdown_check=None) -> None:
     disc = _disc_id(dev)
     cache = _cache_name(iso, disc)
     if not cache.exists():
@@ -169,6 +169,9 @@ def serve(dev: Path, iso: Path, block: int, keep_cache: bool, log: logging.Logge
             ).start()
 
             while not stop_evt.is_set():
+                if shutdown_check and shutdown_check():
+                    log.info("Shutdown requested, stopping server...")
+                    break
                 time.sleep(0.5)
 
         finally:

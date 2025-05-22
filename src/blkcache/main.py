@@ -3,6 +3,7 @@
 
 import argparse
 import logging
+import signal
 import sys
 import time
 from pathlib import Path
@@ -26,13 +27,15 @@ def _parse(argv=None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
-def _wait_for_disc(dev: Path, log: logging.Logger) -> None:
-    """Block until a disc can be opened for reading."""
+def _wait_for_disc(dev: Path, log: logging.Logger, shutdown_check=None) -> bool:
+    """Block until a disc can be opened for reading. Returns True if disc found, False if shutdown requested."""
     while True:
+        if shutdown_check and shutdown_check():
+            return False
         try:
             with dev.open("rb"):
                 log.debug("media detected in %s", dev)
-                return
+                return True
         except OSError:
             log.info("no disc in %s — waiting …", dev)
             time.sleep(2)
@@ -48,10 +51,35 @@ def main(argv=None) -> None:
     dev = Path(args.device).resolve()
     iso = Path(args.iso).resolve()
 
-    while True:
-        _wait_for_disc(dev, log)
-        server.serve(dev, iso, args.block_size, args.keep_cache, log)
-        log.info("waiting for next disc …")
+    # Set up graceful shutdown handling
+    shutdown_requested = False
+
+    def signal_handler(signum, frame):
+        nonlocal shutdown_requested
+        log.info("Received signal %d, initiating graceful shutdown...", signum)
+        shutdown_requested = True
+
+    signal.signal(signal.SIGINT, signal_handler)  # Ctrl+C
+    signal.signal(signal.SIGTERM, signal_handler)  # Termination request
+    signal.signal(signal.SIGQUIT, signal_handler)  # Ctrl+\
+    try:
+        signal.signal(signal.SIGHUP, signal_handler)  # Hangup (terminal closed)
+    except AttributeError:
+        pass  # Not available on all platforms
+
+    try:
+        while not shutdown_requested:
+            if not _wait_for_disc(dev, log, lambda: shutdown_requested):
+                break
+            if shutdown_requested:
+                break
+            server.serve(dev, iso, args.block_size, args.keep_cache, log, lambda: shutdown_requested)
+            if not shutdown_requested:
+                log.info("waiting for next disc …")
+    except KeyboardInterrupt:
+        log.info("Keyboard interrupt received, shutting down...")
+
+    log.info("Shutdown complete.")
 
 
 if __name__ == "__main__":
