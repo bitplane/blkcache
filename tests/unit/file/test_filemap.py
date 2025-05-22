@@ -11,7 +11,12 @@ from blkcache.file.filemap import (
     STATUS_TRIMMED,
     STATUS_SCRAPED,
     NO_SORT,
+    CACHED,
+    UNCACHED,
+    ERROR,
+    STATUSES,
 )
+from blkcache.ddrescue import iter_filemap_ranges
 
 
 @pytest.fixture
@@ -311,37 +316,119 @@ def test_single_offset_assignment(filemap):
     assert filemap.transitions[3] == (100, NO_SORT, STATUS_UNTRIED)
 
 
-def test_iterator_basic(filemap):
-    """Test iterator yields correct (pos, size, status) tuples."""
+def test_getitem_slice_basic(filemap):
+    """Test __getitem__ slice returns transitions with synthetic start/end."""
     filemap[0:25] = STATUS_OK
     filemap[50:75] = STATUS_ERROR
 
-    ranges = list(filemap)
+    # Get transitions for beginning section (all OK, no internal transitions)
+    result = filemap[0:25]
+    assert len(result) == 2
+    assert result[0] == (0, NO_SORT, STATUS_OK)  # synthetic start
+    assert result[1] == (24, NO_SORT, STATUS_OK)  # synthetic end
 
-    assert len(ranges) == 4
-    assert ranges[0] == (0, 25, STATUS_OK)
-    assert ranges[1] == (25, 25, STATUS_UNTRIED)
-    assert ranges[2] == (50, 25, STATUS_ERROR)
-    assert ranges[3] == (75, 25, STATUS_UNTRIED)
-
-
-def test_iterator_empty_transitions():
-    """Test iterator handles empty transitions list."""
-    filemap = FileMap(100)
-    filemap.transitions = []  # Corrupt state
-
-    ranges = list(filemap)
-    assert ranges == []
+    # Get transitions for untried section in middle
+    result = filemap[25:50]
+    assert len(result) == 2
+    assert result[0] == (25, NO_SORT, STATUS_UNTRIED)  # synthetic start
+    assert result[1] == (49, NO_SORT, STATUS_UNTRIED)  # synthetic end
 
 
-def test_iterator_single_transition():
-    """Test iterator with minimal valid transitions."""
-    filemap = FileMap(100)
-    # Only the end marker - everything untried
-    ranges = list(filemap)
+def test_getitem_slice_across_boundaries(filemap):
+    """Test __getitem__ slice that crosses multiple regions."""
+    filemap[20:40] = STATUS_OK
+    filemap[60:80] = STATUS_ERROR
 
-    assert len(ranges) == 1
-    assert ranges[0] == (0, 100, STATUS_UNTRIED)
+    # Get slice that crosses from untried -> ok -> untried -> error -> untried
+    result = filemap[10:90]
+    assert len(result) == 6
+    assert result[0] == (10, NO_SORT, STATUS_UNTRIED)  # synthetic start
+    assert result[1] == (20, NO_SORT, STATUS_OK)  # transition to OK
+    assert result[2] == (40, NO_SORT, STATUS_UNTRIED)  # transition back to untried
+    assert result[3] == (60, NO_SORT, STATUS_ERROR)  # transition to error
+    assert result[4] == (80, NO_SORT, STATUS_UNTRIED)  # transition back to untried
+    assert result[5] == (89, NO_SORT, STATUS_UNTRIED)  # synthetic end
+
+
+def test_getitem_slice_single_byte(filemap):
+    """Test __getitem__ for single byte ranges."""
+    filemap[50:51] = STATUS_ERROR
+
+    result = filemap[49:50]
+    assert len(result) == 2
+    assert result[0] == (49, NO_SORT, STATUS_UNTRIED)
+    assert result[1] == (49, NO_SORT, STATUS_UNTRIED)
+
+    result = filemap[50:51]
+    assert len(result) == 2
+    assert result[0] == (50, NO_SORT, STATUS_ERROR)
+    assert result[1] == (50, NO_SORT, STATUS_ERROR)
+
+
+def test_getitem_slice_empty_range(filemap):
+    """Test __getitem__ for empty range returns empty list."""
+    assert filemap[50:50] == []
+
+
+def test_getitem_slice_bounds_checking(filemap):
+    """Test __getitem__ slice bounds checking."""
+    # Negative start should raise error
+    with pytest.raises(ValueError, match="Negative start index"):
+        filemap[-1:50]
+
+    # Stop beyond size should raise error
+    with pytest.raises(ValueError, match="Stop index beyond device size"):
+        filemap[0:101]
+
+
+def test_getitem_slice_none_values(filemap):
+    """Test __getitem__ slice with None start/stop."""
+    filemap[25:75] = STATUS_OK
+
+    # None start defaults to 0
+    result = filemap[:25]
+    assert len(result) == 2
+    assert result[0] == (0, NO_SORT, STATUS_UNTRIED)
+    assert result[1] == (24, NO_SORT, STATUS_UNTRIED)
+
+    # None stop defaults to size
+    result = filemap[75:]
+    assert len(result) == 2
+    assert result[0] == (75, NO_SORT, STATUS_UNTRIED)
+    assert result[1] == (99, NO_SORT, STATUS_UNTRIED)
+
+
+def test_getitem_slice_step_not_supported(filemap):
+    """Test __getitem__ slice step not supported."""
+    with pytest.raises(ValueError, match="Step not supported"):
+        filemap[0:50:2]
+
+
+def test_getitem_single_offset(filemap):
+    """Test __getitem__ for single offset."""
+    filemap[50] = STATUS_ERROR
+
+    assert filemap[49] == STATUS_UNTRIED
+    assert filemap[50] == STATUS_ERROR
+    assert filemap[51] == STATUS_UNTRIED
+
+
+def test_getitem_performance_large_range(filemap):
+    """Test __getitem__ efficiently handles large ranges."""
+    # Create a large filemap with sparse updates
+    large_filemap = FileMap(1000000)  # 1MB
+    large_filemap[100000:200000] = STATUS_OK
+    large_filemap[500000:600000] = STATUS_ERROR
+
+    # Getting a large range should be efficient (uses bisect)
+    result = large_filemap[150000:550000]
+
+    # Should return synthetic start/end plus the transitions in between
+    assert len(result) == 4  # start + 200000 transition + 500000 transition + end
+    assert result[0] == (150000, NO_SORT, STATUS_OK)  # synthetic start
+    assert result[1] == (200000, NO_SORT, STATUS_UNTRIED)  # transition
+    assert result[2] == (500000, NO_SORT, STATUS_ERROR)  # transition
+    assert result[3] == (549999, NO_SORT, STATUS_ERROR)  # synthetic end
 
 
 def test_pos_property_initial_state(filemap):
@@ -417,3 +504,103 @@ def test_status_property_corrupted_no_valid_statuses():
 
     with pytest.raises(ValueError, match="no valid statuses found"):
         filemap.status
+
+
+def test_helper_sets():
+    """Test helper sets for fast status categorization."""
+    # Test CACHED set (have data)
+    assert STATUS_OK in CACHED
+    assert STATUS_SLOW in CACHED
+    assert STATUS_SCRAPED in CACHED
+    assert STATUS_TRIMMED not in CACHED  # Trimmed = can't get data
+    assert STATUS_UNTRIED not in CACHED
+    assert STATUS_ERROR not in CACHED
+
+    # Test UNCACHED set (need data)
+    assert STATUS_UNTRIED in UNCACHED
+    assert STATUS_OK not in UNCACHED
+    assert STATUS_ERROR not in UNCACHED
+
+    # Test ERROR set (can't get data)
+    assert STATUS_ERROR in ERROR
+    assert STATUS_TRIMMED in ERROR  # Trimmed areas are skipped
+    assert STATUS_OK not in ERROR
+    assert STATUS_UNTRIED not in ERROR
+
+    # Test mutual exclusivity and complete coverage
+    all_statuses = {STATUS_OK, STATUS_ERROR, STATUS_UNTRIED, STATUS_TRIMMED, STATUS_SLOW, STATUS_SCRAPED}
+    assert CACHED & UNCACHED == set()  # No overlap
+    assert CACHED & ERROR == set()  # No overlap
+    assert UNCACHED & ERROR == set()  # No overlap
+    assert CACHED | UNCACHED | ERROR == all_statuses  # Complete coverage
+
+    # Test STATUSES is the union of all three sets
+    assert STATUSES == all_statuses
+    assert STATUSES == CACHED | UNCACHED | ERROR
+
+
+def test_filemap_always_has_end_marker():
+    """Test that FileMap always maintains at least 2 transitions (start + end marker)."""
+    filemap = FileMap(1024)
+
+    # Initial state should have 2 transitions
+    assert len(filemap.transitions) == 2
+
+    # Setting entire range to same status as initial should still keep end marker
+    filemap[0:1024] = STATUS_UNTRIED
+    assert len(filemap.transitions) == 2
+
+    # Should be able to iterate even after setting everything to same status
+    ranges = list(iter_filemap_ranges(filemap))
+    assert len(ranges) == 1  # Should have at least one range
+
+    # The end marker should always be present
+    assert filemap.transitions[-1][0] == 1024  # End marker at device boundary
+
+
+def test_edge_marker_boundary_operations():
+    """Test operations exactly at device boundary preserve end marker."""
+    filemap = FileMap(1024)
+
+    # Set status right up to device boundary - should preserve end marker
+    filemap[0:1024] = STATUS_OK
+    assert len(filemap.transitions) == 2
+    assert filemap.transitions[-1][0] == 1024
+
+    # Properties should still work
+    assert filemap.pos == 1024  # Everything tried, pos should be at end
+    assert filemap.status == STATUS_OK
+
+    # Should be able to get ranges at boundary
+    result = filemap[1020:1024]
+    assert len(result) >= 1
+
+
+def test_properties_robust_after_end_marker_fix():
+    """Test that pos/status properties are robust with preserved end markers."""
+    filemap = FileMap(512)
+
+    # Set everything to same status - should maintain end marker
+    filemap[0:512] = STATUS_ERROR
+
+    # Properties should work correctly
+    assert filemap.pos == 512  # At device end since everything is tried
+    assert filemap.status == STATUS_ERROR
+
+    # Set partial back to untried
+    filemap[100:200] = STATUS_UNTRIED
+    assert filemap.pos == 100  # First untried byte
+    assert filemap.status == STATUS_ERROR  # Still highest priority
+
+
+def test_getitem_robust_with_end_marker():
+    """Test __getitem__ works correctly with preserved end markers."""
+    filemap = FileMap(256)
+
+    # Fill entire device with same status
+    filemap[0:256] = STATUS_SLOW
+
+    # Should be able to query any range
+    assert filemap[100] == STATUS_SLOW
+    assert filemap[0:256] == [(0, NO_SORT, STATUS_SLOW), (255, NO_SORT, STATUS_SLOW)]
+    assert filemap[255:256] == [(255, NO_SORT, STATUS_SLOW), (255, NO_SORT, STATUS_SLOW)]

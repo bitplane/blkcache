@@ -8,12 +8,28 @@ config, and FileMap data.
 import logging
 from typing import Dict, List
 
-from .file.filemap import FileMap
+from .file.filemap import FileMap, STATUSES
 
 # Version of the rescue log format
 FORMAT_VERSION = "1.0"
 
 log = logging.getLogger(__name__)
+
+
+def iter_filemap_ranges(filemap: FileMap):
+    """Iterate over FileMap transitions yielding (pos, size, status) tuples."""
+    if not filemap.transitions:
+        return
+
+    # Process transitions to yield ranges
+    for i in range(len(filemap.transitions) - 1):
+        start = filemap.transitions[i][0]
+        end = filemap.transitions[i + 1][0] - 1
+        status = filemap.transitions[i][2]
+
+        size = end - start + 1
+        if size > 0:  # Skip zero-length ranges
+            yield (start, size, status)
 
 
 def load(file, comments: List[str], filemap: FileMap, config: Dict[str, str]) -> None:
@@ -85,17 +101,20 @@ def save(
 
     # Write transition data
     file.write("#  pos  size  status\n")
-    for pos, size, status in filemap:
+    for pos, size, status in iter_filemap_ranges(filemap):
         file.write(f"0x{pos:08x}  0x{size:08x}  {status}\n")
 
 
 def parse_status(line: str) -> tuple[int, int, str]:
     """Parse a status line returning (start, size, status)."""
-    # Split on '#' and keep only the first half
-    line = line.split("#")[0]
     parts = line.split()
     # Let it crash if not enough parts or invalid format
     start = int(parts[0], 16)
     size = int(parts[1], 16)
     status = parts[2]
+
+    # Validate status is one we recognize
+    if status not in STATUSES:
+        raise ValueError(f"Invalid status '{status}' in line: {line.strip()}")
+
     return start, size, status

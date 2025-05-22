@@ -8,7 +8,7 @@ any file format dependencies.
 import bisect
 import logging
 
-# Used to prevent sorting by anything other than position
+# Prevents sort (not a number, so not less, greater or equal to itself)
 NO_SORT = float("nan")
 
 # Block status codes
@@ -18,6 +18,12 @@ STATUS_UNTRIED = "?"  # Not tried yet
 STATUS_TRIMMED = "/"  # Trimmed (not tried because of read error)
 STATUS_SLOW = "*"  # Non-trimmed, non-scraped (slow reads)
 STATUS_SCRAPED = "#"  # Non-trimmed, scraped (slow reads completed)
+
+# Helper sets for fast status categorization
+CACHED = {STATUS_OK, STATUS_SLOW, STATUS_SCRAPED}  # Have data
+UNCACHED = {STATUS_UNTRIED}  # Need data
+ERROR = {STATUS_ERROR, STATUS_TRIMMED}  # Can't get data
+STATUSES = CACHED | UNCACHED | ERROR  # All valid statuses
 
 log = logging.getLogger(__name__)
 
@@ -58,20 +64,70 @@ class FileMap:
             # Single offset
             self._set_status_range(key, key, status)
 
-    def __iter__(self):
-        """Iterate over transitions yielding (pos, size, status) tuples."""
-        if not self.transitions:
-            return
+    def __getitem__(self, key):
+        """Get status for range using slice notation: filemap[start:end] returns transitions"""
+        if isinstance(key, slice):
+            # Check bounds before calling indices() which clamps values
+            if key.start is not None and key.start < 0:
+                raise ValueError(f"Negative start index: {key.start}")
+            if key.stop is not None and key.stop > self.size:
+                raise ValueError(f"Stop index beyond device size: {key.stop} > {self.size}")
 
-        # Process transitions to yield ranges
-        for i in range(len(self.transitions) - 1):
-            start = self.transitions[i][0]
-            end = self.transitions[i + 1][0] - 1
-            status = self.transitions[i][2]
+            start, stop, step = key.indices(self.size)
+            if step != 1:
+                raise ValueError("Step not supported")
 
-            size = end - start + 1
-            if size > 0:  # Skip zero-length ranges
-                yield (start, size, status)
+            # Return empty list for empty range
+            if start >= stop:
+                return []
+
+            return self._get_transitions_range(start, stop - 1)
+        else:
+            # Single offset
+            return self._get_status_at(key)
+
+    def _get_transitions_range(self, start: int, end: int) -> list[tuple]:
+        """Get transitions covering range with synthetic start/end positions."""
+        # Find transitions that fall within our range [start, end]
+        # We want transitions where start < transition.pos <= end
+        result = []
+
+        # Get status at start position
+        start_search = (start + 1, NO_SORT, "")
+        start_idx = bisect.bisect_left(self.transitions, start_search)
+        start_transition_idx = max(0, start_idx - 1)
+        start_status = self.transitions[start_transition_idx][2]
+
+        # Add synthetic start
+        result.append((start, NO_SORT, start_status))
+
+        # Add all transitions that fall within (start, end]
+        for i in range(len(self.transitions)):
+            pos = self.transitions[i][0]
+            if start < pos <= end:
+                result.append(self.transitions[i])
+
+        # Get status at end position (might be different from start if we crossed transitions)
+        end_search = (end + 1, NO_SORT, "")
+        end_idx = bisect.bisect_left(self.transitions, end_search)
+        end_transition_idx = max(0, end_idx - 1)
+        end_status = self.transitions[end_transition_idx][2]
+
+        # Add synthetic end
+        result.append((end, NO_SORT, end_status))
+
+        return result
+
+    def _get_status_at(self, offset: int) -> str:
+        """Get status at single offset using efficient bisect lookup."""
+        # Search for (offset + 1, ...) to find the transition that starts after offset
+        search_key = (offset + 1, NO_SORT, "")
+        idx = bisect.bisect_left(self.transitions, search_key)
+
+        # The transition covering offset is at idx-1 (or 0 if idx is 0)
+        transition_idx = max(0, idx - 1)
+
+        return self.transitions[transition_idx][2]
 
     def _set_status_range(self, start: int, end: int, status: str) -> None:
         """Set the status for a range of bytes."""
@@ -108,7 +164,7 @@ class FileMap:
                 # if the status is different, we need to add a new entry
                 splice.append(start_key)
 
-        if before_end_status != status:
+        if before_end_status != status or end_idx == len(self.transitions):
             splice.append((end + 1, NO_SORT, before_end_status))
         if end + 1 < after_pos:
             splice.append((after_pos, NO_SORT, after_status))
