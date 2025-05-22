@@ -10,6 +10,7 @@ import logging
 import struct
 import threading
 import time
+from functools import lru_cache
 from pathlib import Path
 
 from .device import Device, BLKSSZGET, DEFAULT_SECTOR_SIZE
@@ -23,6 +24,34 @@ DEFAULT_CDROM_SECTOR_SIZE = 2048
 
 class Removable(Device):
     """Removable device with media change detection."""
+
+    def __init__(self, path: Path | str, mode: str = "rb"):
+        super().__init__(path, mode)
+        # Optical drives and floppy disks are rotational
+        self.is_rotational = self._is_optical() or self._is_floppy()
+
+    def _is_optical(self) -> bool:
+        """Check if this is an optical drive (CD/DVD)."""
+        device_name = self.path.name
+        return device_name.startswith(("sr", "scd")) or "cdrom" in str(self.path)
+
+    def _is_floppy(self) -> bool:
+        """Check if this is a floppy disk drive."""
+        device_name = self.path.name
+        # fd0, fd1 for traditional floppies, sd* devices need more checking
+        if device_name.startswith("fd"):
+            return True
+
+        # Check for USB floppies via sysfs
+        try:
+            model_path = Path(f"/sys/block/{device_name}/device/model")
+            if model_path.exists():
+                model = model_path.read_text().strip().lower()
+                return "floppy" in model or "fd" in model
+        except Exception:
+            pass
+
+        return False
 
     @staticmethod
     def check(path: Path) -> bool:
@@ -38,9 +67,11 @@ class Removable(Device):
             except (OSError, IOError):
                 pass
 
-        # Fallback: optical drive naming patterns
-        return "sr" in str(path) or "cd" in str(path)
+        p = str(path)
+        return p.startswith("/dev/") and ("sr" in p or "cd" in p)
 
+    @property
+    @lru_cache(maxsize=1)
     def sector_size(self) -> int:
         """Get sector size with CDROM-specific ioctl support."""
         try:
@@ -55,23 +86,6 @@ class Removable(Device):
                 if "sr" in str(self.path) or "cd" in str(self.path):
                     return DEFAULT_CDROM_SECTOR_SIZE
                 return DEFAULT_SECTOR_SIZE
-
-    def is_rotational(self) -> bool:
-        """Removable devices are typically rotational (CD/DVD)."""
-        try:
-            # Check sys path first
-            rotational_path = Path(f"/sys/block/{self.path.name}/queue/rotational")
-            if rotational_path.exists():
-                return rotational_path.read_text().strip() == "1"
-        except Exception:
-            pass
-
-        # Heuristic: CDs and DVDs are rotational
-        if "sr" in str(self.path) or "cd" in str(self.path):
-            return True
-
-        # Default for other removable media
-        return False
 
     def watch_for_changes(self, stop_event: threading.Event, callback=None, logger=None) -> None:
         """

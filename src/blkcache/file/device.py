@@ -7,6 +7,7 @@ sector size detection, device sizing, and rotational status.
 
 import fcntl
 import struct
+from functools import lru_cache
 from pathlib import Path
 
 from .base import File
@@ -24,6 +25,8 @@ class Device(File):
 
     def __init__(self, path: Path | str, mode: str = "rb"):
         super().__init__(path, mode)
+        # Update capability based on device type
+        self.is_rotational = self._check_rotational()
 
     @staticmethod
     def check(path: Path) -> bool:
@@ -48,6 +51,8 @@ class Device(File):
         # Fall back to file size
         return self.size()
 
+    @property
+    @lru_cache(maxsize=1)
     def sector_size(self) -> int:
         """Get device sector size using ioctl."""
         try:
@@ -56,7 +61,7 @@ class Device(File):
         except (OSError, IOError):
             return DEFAULT_SECTOR_SIZE
 
-    def is_rotational(self) -> bool:
+    def _check_rotational(self) -> bool:
         """Check if device uses spinning media (HDD) vs flash (SSD)."""
         try:
             # Check sys path for rotational status

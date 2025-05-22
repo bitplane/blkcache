@@ -10,7 +10,7 @@ from pathlib import Path
 from .base import File
 
 
-class CacheFile(File):
+class CachedFile(File):
     """Passthrough cache that wraps another File instance."""
 
     def __init__(self, backing_file: File, cache_file: File):
@@ -49,9 +49,10 @@ class CacheFile(File):
         """Get size from backing file."""
         return self.backing_file.size()
 
+    @property
     def sector_size(self) -> int:
         """Get sector size from backing file."""
-        return self.backing_file.sector_size()
+        return self.backing_file.sector_size
 
     def pread(self, count: int, offset: int) -> bytes:
         """Read with cache - try cache first, then backing file."""

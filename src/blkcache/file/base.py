@@ -1,4 +1,5 @@
 import hashlib
+from functools import lru_cache
 from pathlib import Path
 
 
@@ -9,13 +10,32 @@ class File:
         self.path = Path(path)
         self.mode = mode
         self._f = None
+        self._dependencies = []
+
+        # nbdkit capability attributes - safe defaults
+        self.can_write = "w" in mode or "+" in mode or "a" in mode
+        self.can_flush = True
+        self.can_trim = False
+        self.can_zero = False
+        self.can_fast_zero = False
+        self.can_extents = False
+        self.is_rotational = False
+        self.can_multi_conn = False
 
     @staticmethod
     def check(path: Path) -> bool:
         """Check if this class can handle the given path."""
         return path.is_file() or (path.exists() and not path.is_dir())
 
+    def depends(self, *files):
+        """Register file dependencies for cascading cleanup."""
+        self._dependencies.extend(files)
+        return self
+
     def __enter__(self):
+        # Open dependencies first (bottom-up)
+        for dep in self._dependencies:
+            dep.__enter__()
         self._f = self.path.open(self.mode)
         return self
 
@@ -23,6 +43,9 @@ class File:
         if self._f:
             self._f.close()
         self._f = None
+        # Close dependencies last (top-down)
+        for dep in reversed(self._dependencies):
+            dep.__exit__(exc_type, exc_val, exc_tb)
 
     def __getattr__(self, name):
         """Delegate unknown attributes to the underlying file object."""
@@ -63,6 +86,8 @@ class File:
         finally:
             self._f.seek(current)
 
+    @property
+    @lru_cache(maxsize=1)
     def sector_size(self) -> int:
         """Get sector size of the underlying storage device."""
         try:
