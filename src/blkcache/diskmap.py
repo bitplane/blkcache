@@ -3,6 +3,7 @@ Disk mapping and status tracking in ddrescue-compatible format.
 """
 
 import bisect
+import logging
 from pathlib import Path
 from typing import Dict, List, TextIO
 
@@ -19,6 +20,8 @@ STATUS_SCRAPED = "#"  # Non-trimmed, scraped (slow reads completed)
 
 # Version of the rescue log format
 FORMAT_VERSION = "1.0"
+
+log = logging.getLogger(__name__)
 
 
 class DiskMap:
@@ -118,6 +121,9 @@ class DiskMap:
 
     def write(self) -> None:
         """Write current state to the mapfile."""
+        log.debug("Writing diskmap to %s", self.map_path)
+        log.debug("Diskmap has %d transitions", len(self.transitions))
+
         with self.map_path.open("w") as file:
             # Comments come first
             for comment in self.comments:
@@ -152,6 +158,8 @@ class DiskMap:
 
     def set_status(self, start: int, end: int, status: str) -> None:
         """Set the status for a range of blocks."""
+        log.debug("Setting status %s for range [%d, %d]", status, start, end)
+
         # Input validation
         if start < 0 or end >= self.size:
             raise ValueError(f"Range [{start}, {end}] is outside of device range [0, {self.size - 1}]")

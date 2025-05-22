@@ -2,6 +2,7 @@
 nbdkit Python plugin integration for block-level device caching.
 """
 
+import logging
 from pathlib import Path
 
 # Import constants using full package name for compatibility with nbdkit and pytest
@@ -11,6 +12,8 @@ from blkcache.constants import (
 
 # Import BlockCache class
 from blkcache.cache.through import BlockCache
+
+log = logging.getLogger(__name__)
 
 # Global state
 DEV: Path | None = None
@@ -84,7 +87,9 @@ def pread(h, count: int, offset: int) -> bytes:
 # Add close function to save the mapfile when closing
 def close(h) -> None:
     """Saves mapfile before closing."""
+    log.debug("Plugin close() called - saving diskmap")
     CACHE_INSTANCE.close(h)
+    log.debug("Plugin close() completed")
 
 
 # Optional capability functions - delegate to cache instance

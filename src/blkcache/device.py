@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 from blkcache.constants import BLKGETSIZE64, BLKSSZGET, CDROM_GET_BLKSIZE, DEFAULT_BLOCK_SIZE
+from blkcache.diskmap import DiskMap
 
 
 def get_device_size(dev_path: Path) -> int:
@@ -58,8 +59,6 @@ def get_sector_size(dev_path: Path) -> int:
     log_path = dev_path.with_suffix(f"{dev_path.suffix}.log")
     if log_path.exists():
         try:
-            from blkcache.diskmap import DiskMap
-
             # Get file size for DiskMap validation
             file_size = get_device_size(dev_path)
             temp_diskmap = DiskMap(log_path, file_size)
