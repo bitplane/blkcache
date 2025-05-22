@@ -1,5 +1,5 @@
 import hashlib
-from functools import lru_cache
+from contextlib import ExitStack
 from pathlib import Path
 
 
@@ -10,6 +10,7 @@ class File:
         self.path = Path(path)
         self.mode = mode
         self._f = None
+        self._stack = ExitStack()
         self._dependencies = []
 
         # nbdkit capability attributes - safe defaults
@@ -22,6 +23,9 @@ class File:
         self.is_rotational = False
         self.can_multi_conn = False
 
+        # Compute sector size once
+        self.sector_size = self._get_sector_size()
+
     @staticmethod
     def check(path: Path) -> bool:
         """Check if this class can handle the given path."""
@@ -33,30 +37,24 @@ class File:
         return self
 
     def __enter__(self):
-        # Open dependencies first (bottom-up)
         for dep in self._dependencies:
-            dep.__enter__()
-        self._f = self.path.open(self.mode)
+            self._stack.enter_context(dep)
+        self._f = self._stack.enter_context(self.path.open(self.mode))
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if self._f:
-            self._f.close()
-        self._f = None
-        # Close dependencies last (top-down)
-        for dep in reversed(self._dependencies):
-            dep.__exit__(exc_type, exc_val, exc_tb)
+    def __exit__(self, *args):
+        return self._stack.__exit__(*args)
 
     def __getattr__(self, name):
         """Delegate unknown attributes to the underlying file object."""
         if self._f is None:
-            raise ValueError("File not opened - use within 'with' statement")
+            raise IOError("File not opened - use within 'with' statement")
         return getattr(self._f, name)
 
     def pread(self, count: int, offset: int) -> bytes:
         """Read count bytes at offset without changing file position."""
         if self._f is None:
-            raise ValueError("File not opened - use within 'with' statement")
+            raise IOError("File not opened - use within 'with' statement")
         current = self._f.tell()
         try:
             self._f.seek(offset)
@@ -67,7 +65,7 @@ class File:
     def pwrite(self, data: bytes, offset: int) -> int:
         """Write data at offset without changing file position."""
         if self._f is None:
-            raise ValueError("File not opened - use within 'with' statement")
+            raise IOError("File not opened - use within 'with' statement")
         current = self._f.tell()
         try:
             self._f.seek(offset)
@@ -78,7 +76,7 @@ class File:
     def size(self) -> int:
         """Get file size without changing file position."""
         if self._f is None:
-            raise ValueError("File not opened - use within 'with' statement")
+            raise IOError("File not opened - use within 'with' statement")
         current = self._f.tell()
         try:
             self._f.seek(0, 2)  # Seek to end
@@ -86,9 +84,7 @@ class File:
         finally:
             self._f.seek(current)
 
-    @property
-    @lru_cache(maxsize=1)
-    def sector_size(self) -> int:
+    def _get_sector_size(self) -> int:
         """Get sector size of the underlying storage device."""
         try:
             # Get the device that contains this file

@@ -27,6 +27,8 @@ class Device(File):
         super().__init__(path, mode)
         # Update capability based on device type
         self.is_rotational = self._check_rotational()
+        # Override sector size with device-specific detection
+        self.sector_size = self._get_sector_size()
 
     @staticmethod
     def check(path: Path) -> bool:

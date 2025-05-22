@@ -28,10 +28,8 @@ class MMappedFile(File):
             return False
 
     def __enter__(self):
-        # Open the underlying file first
-        self._f = self.path.open(self.mode)
-
-        # Create memory map
+        super().__enter__()
+        # Create memory map after file is open
         try:
             # Determine mmap access mode
             if "w" in self.mode or "+" in self.mode or "a" in self.mode:
@@ -39,21 +37,14 @@ class MMappedFile(File):
             else:
                 access = mmap.ACCESS_READ
 
-            self._mmap = mmap.mmap(self._f.fileno(), 0, access=access)
+            self._mmap = self._stack.enter_context(mmap.mmap(self._f.fileno(), 0, access=access))
         except (OSError, ValueError) as e:
-            # Close file and raise IOError to hide OS details
-            self._f.close()
             raise IOError(f"Cannot memory-map file {self.path}: {e}")
 
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if self._mmap:
-            self._mmap.close()
-            self._mmap = None
-        if self._f:
-            self._f.close()
-            self._f = None
+    def __exit__(self, *args):
+        return self._stack.__exit__(*args)
 
     def pread(self, count: int, offset: int) -> bytes:
         """Read count bytes at offset using memory map."""

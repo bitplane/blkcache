@@ -74,6 +74,8 @@ class Removable(Device):
     @lru_cache(maxsize=1)
     def sector_size(self) -> int:
         """Get sector size with CDROM-specific ioctl support."""
+        if self._f is None:
+            raise IOError("File is not open")
         try:
             # Try standard block device ioctl first
             return struct.unpack("I", fcntl.ioctl(self._f, BLKSSZGET, b"\0" * 4))[0]

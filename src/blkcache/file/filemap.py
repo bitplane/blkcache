@@ -177,13 +177,13 @@ class FileMap:
         for position, _, status in self.transitions:
             if status == STATUS_UNTRIED:
                 return position
-        raise ValueError("FileMap transitions corrupted, someone deleted the end one.")
+        raise ValueError("FileMap transitions corrupted.")
 
     @property
     def status(self) -> str:
         """Current status - highest priority status found in transitions."""
         if len(self.transitions) < 2:
-            raise ValueError("FileMap transitions corrupted - insufficient entries")
+            raise ValueError("FileMap transitions corrupted")
 
         # ddrescue priority order: error > untried > trimmed > slow > scraped > ok
         priority_order = [STATUS_ERROR, STATUS_UNTRIED, STATUS_TRIMMED, STATUS_SLOW, STATUS_SCRAPED, STATUS_OK]
@@ -194,4 +194,4 @@ class FileMap:
             if status in statuses:
                 return status
 
-        raise ValueError("FileMap transitions corrupted - no valid statuses found")
+        raise ValueError("FileMap transitions corrupted")
