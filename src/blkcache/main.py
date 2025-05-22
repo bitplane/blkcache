@@ -20,7 +20,10 @@ def _parse(argv=None) -> argparse.Namespace:
         default=None,
         help="Block size in bytes (default: auto-detect based on device type)",
     )
-    p.add_argument("-k", "--keep-cache", action="store_true", help="keep *.cache.<id>~ after exit")
+    p.add_argument(
+        "-k", "--keep-cache", action="store_true", default=True, help="keep *.cache.<id>~ after exit (default: True)"
+    )
+    p.add_argument("--no-keep-cache", dest="keep_cache", action="store_false", help="delete *.cache.<id>~ after exit")
     p.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     p.add_argument("device")  # /dev/sr0 …
     p.add_argument("iso")  # symlink clients read
