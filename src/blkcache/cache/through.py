@@ -5,11 +5,8 @@ Read-through block device caching with fault tracking and disk image preservatio
 import errno
 from typing import Dict, Any
 
-from blkcache.constants import (
-    DEFAULT_BLOCK_SIZE,
-)
-from blkcache.device import get_device_size, get_sector_size
-from blkcache.diskmap import DiskMap, FORMAT_VERSION
+from blkcache.device import get_device_size, get_sector_size, DEFAULT_BLOCK_SIZE
+from blkcache.ddrescue import FORMAT_VERSION
 from blkcache.cache.cache import Cache
 
 

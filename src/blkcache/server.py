@@ -1,7 +1,6 @@
 """blkcache.server – userspace read-through cache via nbdkit + nbdfuse."""
 
 import contextlib
-import hashlib
 import logging
 import shutil
 import subprocess
@@ -11,11 +10,7 @@ import time
 from pathlib import Path
 
 from blkcache.device import get_device_size
-
-
-def _disc_id(dev: Path, head: int = 65_536) -> str:
-    with dev.open("rb") as fh:
-        return hashlib.sha1(fh.read(head)).hexdigest()[:8]
+from blkcache.file.removable import Removable
 
 
 def _cache_name(out_iso: Path, disc: str) -> Path:
@@ -64,36 +59,9 @@ def _wait(path: Path, log: logging.Logger, t: float = 10.0, process=None) -> Non
     log.debug("ready: %s", path)
 
 
-def _watch_disc(dev: Path, orig_id: str, orig_mtime: float, stop: threading.Event, log: logging.Logger) -> None:
-    """
-    Block until the disc is removed or a new one is inserted.
-    """
-    while not stop.is_set():
-        try:
-            mtime = dev.stat().st_mtime
-            if mtime != orig_mtime:
-                try:
-                    new_id = _disc_id(dev)
-                except OSError as e:
-                    if e.errno == 123:  # ENOMEDIUM
-                        log.info("tray opened")
-                        stop.set()
-                        break
-                    raise
-                if new_id != orig_id:
-                    log.info("new disc detected (%s → %s)", orig_id, new_id)
-                    stop.set()
-                    break
-                orig_mtime = mtime
-        except FileNotFoundError:
-            log.info("device node vanished")
-            stop.set()
-            break
-        time.sleep(1)
-
-
 def serve(dev: Path, iso: Path, block: int, keep_cache: bool, log: logging.Logger, shutdown_check=None) -> None:
-    disc = _disc_id(dev)
+    with Removable(dev, "rb") as device:
+        disc = device.fingerprint()
     cache = _cache_name(iso, disc)
     if not cache.exists():
         with cache.open("wb") as fh:
@@ -111,7 +79,7 @@ def serve(dev: Path, iso: Path, block: int, keep_cache: bool, log: logging.Logge
             "--unix",
             str(sock),
             "python",
-            str(Path(__file__).with_name("plugin.py")),
+            str(Path(__file__).with_name("backend.py")),
             f"device={dev}",
             f"cache={cache}",
         ]
@@ -162,17 +130,25 @@ def serve(dev: Path, iso: Path, block: int, keep_cache: bool, log: logging.Logge
 
             _wait(target, log, process=nbdfuse)  # FUSE file materialised, pass nbdfuse to check for errors
 
-            # start watchdog
+            # start media watchdog
             stop_evt = threading.Event()
-            threading.Thread(
-                target=_watch_disc, args=(dev, disc, dev.stat().st_mtime, stop_evt, log), daemon=True
-            ).start()
 
-            while not stop_evt.is_set():
-                if shutdown_check and shutdown_check():
-                    log.info("Shutdown requested, stopping server...")
-                    break
-                time.sleep(0.5)
+            def media_change_callback(old_id, new_id):
+                if new_id is None:
+                    log.info("Media removed")
+                else:
+                    log.info("Media changed (%s → %s)", old_id, new_id)
+
+            with Removable(dev, "rb") as removable_device:
+                threading.Thread(
+                    target=removable_device.watch_for_changes, args=(stop_evt, media_change_callback, log), daemon=True
+                ).start()
+
+                while not stop_evt.is_set():
+                    if shutdown_check and shutdown_check():
+                        log.info("Shutdown requested, stopping server...")
+                        break
+                    time.sleep(0.5)
 
         finally:
             # Ensure diskmap is written before shutdown
