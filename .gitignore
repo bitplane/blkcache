@@ -7,3 +7,5 @@ coverage.json
 pydoc
 *~
 *.iso
+*.bak
+*.log
