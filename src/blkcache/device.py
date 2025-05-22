@@ -34,24 +34,42 @@ def get_device_size(dev_path: Path) -> int:
 
 
 def get_sector_size(dev_path: Path) -> int:
-    """Determines physical sector size of a block device, falling back to device-specific defaults."""
-    try:
-        with dev_path.open("rb") as fh:
-            # Try BLKSSZGET ioctl (works for most block devices)
-            try:
-                return struct.unpack("I", fcntl.ioctl(fh, BLKSSZGET, b"\0" * 4))[0]
-            except IOError:
-                # Try CDROM_GET_BLKSIZE for optical media
+    """Determines sector size: from block device ioctls, existing .log file, or 512B default."""
+    # 1. If it's a block device, get the actual sector size
+    if dev_path.is_block_device():
+        try:
+            with dev_path.open("rb") as fh:
+                # Try BLKSSZGET ioctl (works for most block devices)
                 try:
-                    return struct.unpack("I", fcntl.ioctl(fh, CDROM_GET_BLKSIZE, b"\0" * 4))[0]
+                    return struct.unpack("I", fcntl.ioctl(fh, BLKSSZGET, b"\0" * 4))[0]
                 except IOError:
-                    # Default sizes based on device name pattern
-                    if "sr" in str(dev_path) or "cd" in str(dev_path):
-                        return DEFAULT_BLOCK_SIZE  # Default CD/DVD sector size
-                    return 512  # Default for most other devices
-    except OSError:
-        # Fallback if we can't open the device
-        return 512  # Default to 512 bytes (common for hard disks)
+                    # Try CDROM_GET_BLKSIZE for optical media
+                    try:
+                        return struct.unpack("I", fcntl.ioctl(fh, CDROM_GET_BLKSIZE, b"\0" * 4))[0]
+                    except IOError:
+                        # Default sizes based on device name pattern
+                        if "sr" in str(dev_path) or "cd" in str(dev_path):
+                            return DEFAULT_BLOCK_SIZE  # Default CD/DVD sector size
+                        return 512  # Default for most other devices
+        except OSError:
+            return 512  # Fallback if we can't open the device
+
+    # 2. If it's a regular file, check for existing .log file
+    log_path = dev_path.with_suffix(f"{dev_path.suffix}.log")
+    if log_path.exists():
+        try:
+            from blkcache.diskmap import DiskMap
+
+            # Get file size for DiskMap validation
+            file_size = get_device_size(dev_path)
+            temp_diskmap = DiskMap(log_path, file_size)
+            if "block_size" in temp_diskmap.config:
+                return int(temp_diskmap.config["block_size"])
+        except (ValueError, KeyError, Exception):
+            pass  # Fall through to default
+
+    # 3. Default to 512 bytes for regular files
+    return 512
 
 
 def is_rotational(dev_path: Path) -> bool:

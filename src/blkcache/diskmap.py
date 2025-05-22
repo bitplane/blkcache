@@ -81,6 +81,15 @@ class DiskMap:
                     if " pos " in line and " size " in line and " status" in line:
                         continue
 
+                    # Parse ddrescue command line for block size
+                    if "Command line:" in line and "-b" in line:
+                        import re
+
+                        match = re.search(r"-b\s+(\d+)", line)
+                        if match:
+                            self.config["block_size"] = match.group(1)
+                            self.config["block_size_source"] = "ddrescue_command_line"
+
                     # Store all other comment lines
                     self.comments.append(line)
 

@@ -8,7 +8,7 @@ from typing import Dict, Any
 from blkcache.constants import (
     DEFAULT_BLOCK_SIZE,
 )
-from blkcache.device import get_device_size, determine_block_size
+from blkcache.device import get_device_size, get_sector_size
 from blkcache.diskmap import DiskMap, FORMAT_VERSION
 from blkcache.cache.cache import Cache
 
@@ -48,17 +48,14 @@ class BlockCache(Cache):
         self._determine_block_size()
 
     def _determine_block_size(self):
-        """Selects optimal block size from config, detection, or falls back to defaults."""
+        """Determines block size using get_sector_size logic."""
         if self.block_size is None:
-            block_size, metadata_updates = determine_block_size(
-                device=self.device, current_block_size=DEFAULT_BLOCK_SIZE, metadata=self.diskmap.config
-            )
-            self.block_size = block_size
-            self.diskmap.config.update(metadata_updates)
+            self.block_size = get_sector_size(self.device)
 
-        # Add default metadata
-        if "format_version" not in self.diskmap.config:
-            self.diskmap.config["format_version"] = FORMAT_VERSION
+        # Store in diskmap config
+        self.diskmap.config["block_size"] = str(self.block_size)
+        self.diskmap.config["format_version"] = FORMAT_VERSION
+        self.diskmap.config["source_file"] = str(self.device)
 
     def read_block(self, block_num: int) -> bytes:
         """Retrieves block data, first checking cache then falling back to device read."""
