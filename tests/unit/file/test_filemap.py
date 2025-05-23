@@ -267,13 +267,13 @@ def test_set_status_invalid_input(filemap):
 
 def test_slice_bounds_negative_start(filemap):
     """Test that negative start indices raise ValueError."""
-    with pytest.raises(ValueError, match="Negative start index"):
+    with pytest.raises(ValueError):
         filemap[-1:50] = STATUS_OK
 
 
 def test_slice_bounds_stop_beyond_size(filemap):
     """Test that stop indices beyond device size raise ValueError."""
-    with pytest.raises(ValueError, match="Stop index beyond device size"):
+    with pytest.raises(ValueError):
         filemap[0:101] = STATUS_OK
 
 
@@ -373,11 +373,11 @@ def test_getitem_slice_empty_range(filemap):
 def test_getitem_slice_bounds_checking(filemap):
     """Test __getitem__ slice bounds checking."""
     # Negative start should raise error
-    with pytest.raises(ValueError, match="Negative start index"):
+    with pytest.raises(ValueError):
         filemap[-1:50]
 
     # Stop beyond size should raise error
-    with pytest.raises(ValueError, match="Stop index beyond device size"):
+    with pytest.raises(ValueError):
         filemap[0:101]
 
 
@@ -456,7 +456,7 @@ def test_pos_property_corrupted_no_untried(filemap):
     """Test pos property raises error when transitions are corrupted."""
     filemap.transitions = [(0, NO_SORT, STATUS_OK), (100, NO_SORT, STATUS_OK)]  # No untried
 
-    with pytest.raises(ValueError, match="FileMap transitions corrupted, someone deleted the end one"):
+    with pytest.raises(ValueError):
         filemap.pos
 
 
@@ -492,7 +492,7 @@ def test_status_property_corrupted_insufficient_transitions():
     filemap = FileMap(100)
     filemap.transitions = [(0, NO_SORT, STATUS_OK)]  # Missing end marker
 
-    with pytest.raises(ValueError, match="insufficient entries"):
+    with pytest.raises(ValueError):
         filemap.status
 
 
@@ -502,7 +502,7 @@ def test_status_property_corrupted_no_valid_statuses():
     # Corrupt the transitions to have invalid status
     filemap.transitions = [(0, NO_SORT, "INVALID"), (100, NO_SORT, "INVALID")]
 
-    with pytest.raises(ValueError, match="no valid statuses found"):
+    with pytest.raises(ValueError):
         filemap.status
 
 

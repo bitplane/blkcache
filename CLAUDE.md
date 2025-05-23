@@ -12,11 +12,11 @@ The project follows a layered architecture:
 
 1. **Main Entry Point** (`main.py`): CLI interface that manages device monitoring and server lifecycle
 2. **Server Layer** (`server.py`): Orchestrates nbdkit, nbdfuse, and FUSE mounting
-3. **Plugin Layer** (`plugin.py`): nbdkit Python plugin that handles block device operations
-4. **Cache Layer** (`cache/`): Abstract caching interface and implementations
-5. **DiskMap** (`diskmap.py`): ddrescue-compatible mapfile handling for tracking read status
+3. **Backend Layer** (`backend.py`): nbdkit Python plugin that handles block device operations
+4. **File Layer** (`file/`): Modular file abstraction with automatic type detection and composition
+5. **FileMap** (`file/filemap.py`): ddrescue-compatible mapfile handling for tracking read status
 
-The cache implementation appears to be in transition from a legacy global state approach to a more modular `Cache` class architecture.
+The implementation is in transition from a legacy global state approach in the backend to a modular File-based architecture using composition over inheritance.
 
 ## Development Commands
 
@@ -58,7 +58,7 @@ Tests use pytest (functional style, not unittest OOP style). Test files mirror t
 2. **Block Size**: Default is 4KB, but can be auto-detected based on device type or specified manually
 3. **Caching**: Uses memory-mapped files for sector caching
 4. **Disk Status Tracking**: Compatible with ddrescue format for tracking read status
-5. **Transitions**: The DiskMap uses a transition-based approach for efficiently representing block states
+5. **Transitions**: The FileMap uses a transition-based approach for efficiently representing block states
 
 ## Code Style
 
