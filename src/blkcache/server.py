@@ -9,7 +9,7 @@ import threading
 import time
 from pathlib import Path
 
-from blkcache.device import get_device_size
+from blkcache.file.device import Device
 from blkcache.file.removable import Removable
 
 
@@ -65,7 +65,8 @@ def serve(dev: Path, iso: Path, block: int, keep_cache: bool, log: logging.Logge
     cache = _cache_name(iso, disc)
     if not cache.exists():
         with cache.open("wb") as fh:
-            fh.truncate(get_device_size(dev))
+            with Device(dev, "rb") as device:
+                fh.truncate(device.device_size())
 
     with _workspace(log) as (tmp, mnt):
         sock = tmp / "nbd.sock"
@@ -151,17 +152,6 @@ def serve(dev: Path, iso: Path, block: int, keep_cache: bool, log: logging.Logge
                     time.sleep(0.5)
 
         finally:
-            # Ensure diskmap is written before shutdown
-            try:
-                from blkcache.cache.through import BlockCache
-
-                config = {"device_path": dev, "cache_path": cache}
-                cache_instance = BlockCache(config)
-                cache_instance.diskmap.write()
-                log.debug("Diskmap written on shutdown")
-            except Exception as e:
-                log.warning("Failed to write diskmap on shutdown: %s", e)
-
             subprocess.call(["fusermount3", "-u", str(mnt)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             if nbdfuse is not None:
                 nbdfuse.terminate()

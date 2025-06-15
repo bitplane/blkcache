@@ -18,6 +18,10 @@ The project follows a layered architecture:
 
 The implementation is in transition from a legacy global state approach in the backend to a modular File-based architecture using composition over inheritance.
 
+## Project goals
+
+This is a block cache, where
+
 ## Development Commands
 
 ```bash
