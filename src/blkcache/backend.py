@@ -8,6 +8,7 @@ operations to the composed file chain.
 
 import logging
 from functools import partial
+from itertools import count
 from pathlib import Path
 
 # Import file detection
@@ -30,6 +31,7 @@ METADATA = {}
 
 # Simple dispatch table: handle -> (file_instance, context_generator)
 TABLE = {}
+HANDLE_IDS = count(1)
 
 
 def lookup(attr: str, handle: int, table=TABLE):
@@ -101,7 +103,7 @@ def config_complete() -> None:
 
 def open(_readonly: bool) -> int:
     """Opens device and returns handle ID."""
-    handle = len(TABLE) + 1
+    handle = next(HANDLE_IDS)
     ctx = open_file_context(DEV, "rb")
     obj = next(ctx)
     TABLE[handle] = (obj, ctx)

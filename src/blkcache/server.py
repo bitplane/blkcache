@@ -83,6 +83,7 @@ def serve(dev: Path, iso: Path, block: int, keep_cache: bool, log: logging.Logge
 
         # Initialize nbdfuse to None to avoid UnboundLocalError
         nbdfuse = None
+        target = None
 
         nbdkit = subprocess.Popen(cmd_args)
 
@@ -128,5 +129,5 @@ def serve(dev: Path, iso: Path, block: int, keep_cache: bool, log: logging.Logge
             if not keep_cache:
                 cache.unlink(missing_ok=True)
                 cache.with_name(f"{cache.name}.map").unlink(missing_ok=True)
-            if iso.is_symlink() and iso.readlink() == target:
+            if target is not None and iso.is_symlink() and iso.readlink() == target:
                 iso.unlink(missing_ok=True)
