@@ -44,6 +44,13 @@ def _wait(path: Path, log: logging.Logger, t: float = 10.0, process=None) -> Non
     log.debug("ready: %s", path)
 
 
+def _check_process(process: subprocess.Popen, name: str) -> None:
+    """Raise if a child process exited while the server should be running."""
+    returncode = process.poll()
+    if returncode is not None:
+        raise RuntimeError(f"{name} exited unexpectedly with code {returncode}")
+
+
 def serve(dev: Path, iso: Path, block: int, keep_cache: bool, log: logging.Logger, shutdown_check=None) -> None:
     if iso.exists() or iso.is_symlink():
         raise FileExistsError(f"refusing to replace existing output path: {iso}")
@@ -114,6 +121,8 @@ def serve(dev: Path, iso: Path, block: int, keep_cache: bool, log: logging.Logge
                 ).start()
 
                 while not stop_evt.is_set():
+                    _check_process(nbdkit, "nbdkit")
+                    _check_process(nbdfuse, "nbdfuse")
                     if shutdown_check and shutdown_check():
                         log.info("Shutdown requested, stopping server...")
                         break

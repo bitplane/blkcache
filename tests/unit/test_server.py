@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, Mock
 
 import pytest
 
-from blkcache.server import _cache_name, _wait, serve
+from blkcache.server import _cache_name, _check_process, _wait, serve
 
 
 def test_wait_reports_child_failure_at_all_log_levels(tmp_path):
@@ -14,6 +14,21 @@ def test_wait_reports_child_failure_at_all_log_levels(tmp_path):
 
     with pytest.raises(RuntimeError, match="process exited with code 7"):
         _wait(tmp_path / "missing", logging.getLogger("test"), process=process)
+
+
+def test_check_process_reports_unexpected_exit():
+    process = Mock()
+    process.poll.return_value = 9
+
+    with pytest.raises(RuntimeError, match="nbdfuse exited unexpectedly with code 9"):
+        _check_process(process, "nbdfuse")
+
+
+def test_check_process_accepts_running_child():
+    process = Mock()
+    process.poll.return_value = None
+
+    _check_process(process, "nbdkit")
 
 
 def test_serve_refuses_to_replace_existing_output(tmp_path):
