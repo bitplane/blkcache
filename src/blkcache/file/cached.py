@@ -5,20 +5,32 @@ CacheFile wraps another File and provides read-through caching.
 Opens the backing file in its __enter__ method.
 """
 
+import threading
+from collections.abc import Callable
 from pathlib import Path
 
 from .base import File
+from .filemap import CACHED, STATUS_ERROR, STATUS_OK, FileMap
 
 
 class CachedFile(File):
     """Passthrough cache that wraps another File instance."""
 
-    def __init__(self, backing_file: File, cache_file: File):
+    def __init__(
+        self,
+        backing_file: File,
+        cache_file: File,
+        filemap: FileMap,
+        save_filemap: Callable[[], None] | None = None,
+    ):
         # We don't call super().__init__ because we don't have our own path
         self.backing_file = backing_file
         self.cache_file = cache_file
         self.mode = backing_file.mode
         self._f = None  # For compatibility with base File
+        self.filemap = filemap
+        self.save_filemap = save_filemap
+        self._lock = threading.RLock()
 
     @staticmethod
     def check(path: Path) -> bool:
@@ -55,32 +67,52 @@ class CachedFile(File):
         return self.backing_file.sector_size
 
     def pread(self, count: int, offset: int) -> bytes:
-        """Read with cache - try cache first, then backing file."""
-        try:
-            # Try reading from cache first
-            data = self.cache_file.pread(count, offset)
-            if len(data) == count:
-                return data
-        except (IOError, OSError):
-            pass  # Cache miss or error, fall through to backing file
+        """Read valid ranges from the cache and populate misses from the backing file."""
+        if count <= 0:
+            return b""
 
-        # Read from backing file
-        data = self.backing_file.pread(count, offset)
+        with self._lock:
+            end = min(offset + count, self.filemap.size)
+            if offset < 0 or offset >= end:
+                return b""
 
-        # Update cache
-        self.cache_file.pwrite(data, offset)
+            statuses = self.filemap[offset:end]
+            if statuses and all(status in CACHED for _, _, status in statuses):
+                return self.cache_file.pread(end - offset, offset)
 
-        return data
+            try:
+                data = self.backing_file.pread(end - offset, offset)
+            except OSError:
+                self.filemap[offset:end] = STATUS_ERROR
+                self._save_map()
+                raise
+
+            if data:
+                written = self.cache_file.pwrite(data, offset)
+                if written != len(data):
+                    raise OSError(f"short cache write: {written} of {len(data)} bytes")
+                self.cache_file.flush()
+                self.filemap[offset : offset + len(data)] = STATUS_OK
+                self._save_map()
+
+            return data
 
     def pwrite(self, data: bytes, offset: int) -> int:
         """Write through to both cache and backing file."""
         # Write to backing file first
-        result = self.backing_file.pwrite(data, offset)
+        with self._lock:
+            result = self.backing_file.pwrite(data, offset)
+            cached = self.cache_file.pwrite(data[:result], offset)
+            if cached != result:
+                raise OSError(f"short cache write: {cached} of {result} bytes")
+            self.cache_file.flush()
+            self.filemap[offset : offset + result] = STATUS_OK
+            self._save_map()
+            return result
 
-        # Update cache
-        self.cache_file.pwrite(data, offset)
-
-        return result
+    def _save_map(self) -> None:
+        if self.save_filemap is not None:
+            self.save_filemap()
 
     def fingerprint(self, head: int = 65_536) -> str:
         """Get fingerprint from backing file."""

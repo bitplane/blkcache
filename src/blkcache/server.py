@@ -34,25 +34,10 @@ def _wait(path: Path, log: logging.Logger, t: float = 10.0, process=None) -> Non
     """Wait for a path to appear, with timeout."""
     end = time.time() + t
     while not path.exists():
-        # Check process status if available and debugging
-        if process and log.getEffectiveLevel() <= logging.DEBUG:
-            if process.poll() is not None:
-                log.debug("Process exited with code: %d", process.returncode)
-                if hasattr(process, "stderr") and hasattr(process, "stdout"):
-                    stderr = process.stderr.read() if process.stderr else ""
-                    stdout = process.stdout.read() if process.stdout else ""
-                    log.debug("Process stderr: %s", stderr)
-                    log.debug("Process stdout: %s", stdout)
-                break
+        if process and process.poll() is not None:
+            raise RuntimeError(f"process exited with code {process.returncode} while waiting for {path}")
 
         if time.time() > end:
-            # If we're timing out and have debug enabled, get process output
-            if process and log.getEffectiveLevel() <= logging.DEBUG:
-                if hasattr(process, "stderr") and hasattr(process, "stdout"):
-                    stderr = process.stderr.read() if process.stderr else ""
-                    stdout = process.stdout.read() if process.stdout else ""
-                    log.debug("Process stderr on timeout: %s", stderr)
-                    log.debug("Process stdout on timeout: %s", stdout)
             raise TimeoutError(f"timeout waiting for {path}")
 
         time.sleep(0.1)
@@ -60,13 +45,15 @@ def _wait(path: Path, log: logging.Logger, t: float = 10.0, process=None) -> Non
 
 
 def serve(dev: Path, iso: Path, block: int, keep_cache: bool, log: logging.Logger, shutdown_check=None) -> None:
+    if iso.exists() or iso.is_symlink():
+        raise FileExistsError(f"refusing to replace existing output path: {iso}")
+
     with Removable(dev, "rb") as device:
         disc = device.fingerprint()
     cache = _cache_name(iso, disc)
     if not cache.exists():
-        with cache.open("wb") as fh:
-            with Device(dev, "rb") as device:
-                fh.truncate(device.device_size())
+        with cache.open("wb") as fh, Device(dev, "rb") as device:
+            fh.truncate(device.device_size())
 
     with _workspace(log) as (tmp, mnt):
         sock = tmp / "nbd.sock"
@@ -74,9 +61,9 @@ def serve(dev: Path, iso: Path, block: int, keep_cache: bool, log: logging.Logge
         # Build nbdkit command arguments
         cmd_args = [
             "nbdkit",
-            "-v",
             "--foreground",
             "--exit-with-parent",
+            "--readonly",
             "--unix",
             str(sock),
             "python",
@@ -84,6 +71,9 @@ def serve(dev: Path, iso: Path, block: int, keep_cache: bool, log: logging.Logge
             f"device={dev}",
             f"cache={cache}",
         ]
+
+        if log.getEffectiveLevel() <= logging.DEBUG:
+            cmd_args.insert(1, "-v")
 
         # Add block size argument only if explicitly specified
         if block is not None:
@@ -94,39 +84,16 @@ def serve(dev: Path, iso: Path, block: int, keep_cache: bool, log: logging.Logge
         # Initialize nbdfuse to None to avoid UnboundLocalError
         nbdfuse = None
 
-        # For DEBUG level, capture output; otherwise suppress it
-        if log.getEffectiveLevel() <= logging.DEBUG:
-            nbdkit = subprocess.Popen(
-                cmd_args,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,  # Get strings back instead of bytes
-            )
-        else:
-            nbdkit = subprocess.Popen(
-                cmd_args,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
+        nbdkit = subprocess.Popen(cmd_args)
 
         try:
             _wait(sock, log, process=nbdkit)  # Pass nbdkit to _wait to check for errors
             uri = f"nbd+unix:///?socket={sock}"
 
             target = mnt / "disc.iso"
-            # Capture nbdfuse output for debugging
-            if log.getEffectiveLevel() <= logging.DEBUG:
-                nbdfuse = subprocess.Popen(
-                    ["nbdfuse", str(target), uri], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
-                )
-            else:
-                nbdfuse = subprocess.Popen(
-                    ["nbdfuse", str(target), uri], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-                )
+            nbdfuse = subprocess.Popen(["nbdfuse", str(target), uri])
 
             # create dangling symlink immediately
-            if iso.exists() or iso.is_symlink():
-                iso.unlink()
             iso.symlink_to(target)
 
             _wait(target, log, process=nbdfuse)  # FUSE file materialised, pass nbdfuse to check for errors
@@ -160,5 +127,6 @@ def serve(dev: Path, iso: Path, block: int, keep_cache: bool, log: logging.Logge
             nbdkit.wait()
             if not keep_cache:
                 cache.unlink(missing_ok=True)
-            if iso.is_symlink():
+                cache.with_name(f"{cache.name}.map").unlink(missing_ok=True)
+            if iso.is_symlink() and iso.readlink() == target:
                 iso.unlink(missing_ok=True)

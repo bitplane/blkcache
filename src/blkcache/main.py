@@ -52,7 +52,9 @@ def main(argv=None) -> None:
     log.info("Starting blkcache with python: %s", sys.executable)
 
     dev = Path(args.device).resolve()
-    iso = Path(args.iso).resolve()
+    # Keep the literal output path so existing and dangling symlinks can be
+    # detected safely by the server rather than followed to their targets.
+    iso = Path(args.iso).absolute()
 
     # Set up graceful shutdown handling
     shutdown_requested = False

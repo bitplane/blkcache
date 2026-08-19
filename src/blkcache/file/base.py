@@ -24,7 +24,7 @@ class File:
         self.can_multi_conn = False
 
         # Compute sector size once
-        self.sector_size = self._get_sector_size()
+        self._sector_size = self._get_sector_size()
 
     @staticmethod
     def check(path: Path) -> bool:
@@ -95,6 +95,11 @@ class File:
         except (OSError, AttributeError):
             # Fallback to common default
             return 512
+
+    @property
+    def sector_size(self) -> int:
+        """Return the preferred I/O size for this file."""
+        return self._sector_size
 
     def fingerprint(self, head: int = 65_536) -> str:
         """Generate content fingerprint from file header."""
