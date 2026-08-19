@@ -77,25 +77,43 @@ class CachedFile(File):
                 return b""
 
             statuses = self.filemap[offset:end]
-            if statuses and all(status in CACHED for _, _, status in statuses):
-                return self.cache_file.pread(end - offset, offset)
+            runs = []
+            run_start = offset
+            run_status = statuses[0][2]
+            for position, _, status in statuses[1:]:
+                if status != run_status:
+                    runs.append((run_start, position, run_status))
+                    run_start = position
+                    run_status = status
+            runs.append((run_start, end, run_status))
 
-            try:
-                data = self.backing_file.pread(end - offset, offset)
-            except OSError:
-                self.filemap[offset:end] = STATUS_ERROR
-                self._save_map()
-                raise
+            result = bytearray()
+            for run_start, run_end, status in runs:
+                run_size = run_end - run_start
+                if status in CACHED:
+                    result.extend(self.cache_file.pread(run_size, run_start))
+                    continue
 
-            if data:
-                written = self.cache_file.pwrite(data, offset)
-                if written != len(data):
-                    raise OSError(f"short cache write: {written} of {len(data)} bytes")
-                self.cache_file.flush()
-                self.filemap[offset : offset + len(data)] = STATUS_OK
-                self._save_map()
+                try:
+                    data = self.backing_file.pread(run_size, run_start)
+                except OSError:
+                    self.filemap[run_start:run_end] = STATUS_ERROR
+                    self._save_map()
+                    raise
 
-            return data
+                if data:
+                    written = self.cache_file.pwrite(data, run_start)
+                    if written != len(data):
+                        raise OSError(f"short cache write: {written} of {len(data)} bytes")
+                    self.cache_file.flush()
+                    self.filemap[run_start : run_start + len(data)] = STATUS_OK
+                    self._save_map()
+                    result.extend(data)
+
+                if len(data) != run_size:
+                    break
+
+            return bytes(result)
 
     def pwrite(self, data: bytes, offset: int) -> int:
         """Write through to both cache and backing file."""

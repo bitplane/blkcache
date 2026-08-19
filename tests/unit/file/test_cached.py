@@ -22,6 +22,13 @@ class BrokenFile(File):
         raise OSError("unreadable medium")
 
 
+class SelectivelyBrokenFile(CountingFile):
+    def pread(self, count: int, offset: int) -> bytes:
+        if offset < 4:
+            raise OSError("cached prefix must not be reread")
+        return super().pread(count, offset)
+
+
 def test_cache_miss_populates_cache_and_map(tmp_path):
     source_path = tmp_path / "source"
     cache_path = tmp_path / "cache"
@@ -84,3 +91,41 @@ def test_read_error_is_recorded_and_reraised(tmp_path):
     assert filemap[2] == STATUS_ERROR
     assert filemap[5] == STATUS_ERROR
     assert saves == [True]
+
+
+def test_mixed_read_uses_cache_and_only_fetches_missing_ranges(tmp_path):
+    source_path = tmp_path / "source"
+    cache_path = tmp_path / "cache"
+    source_path.write_bytes(b"abcdefgh")
+    cache_path.write_bytes(b"ABCD\0\0\0\0")
+    source = SelectivelyBrokenFile(source_path, "rb")
+    filemap = FileMap(8)
+    filemap[0:4] = STATUS_OK
+
+    with CachedFile(source, File(cache_path, "r+b"), filemap) as cached:
+        assert cached.pread(8, 0) == b"ABCDefgh"
+
+    assert source.reads == [(4, 4)]
+    assert cache_path.read_bytes() == b"ABCDefgh"
+    assert filemap[0] == STATUS_OK
+    assert filemap[7] == STATUS_OK
+
+
+def test_mixed_read_error_preserves_cached_range(tmp_path):
+    source_path = tmp_path / "source"
+    cache_path = tmp_path / "cache"
+    source_path.write_bytes(b"abcdefgh")
+    cache_path.write_bytes(b"ABCD\0\0\0\0")
+    filemap = FileMap(8)
+    filemap[0:4] = STATUS_OK
+
+    with (
+        CachedFile(BrokenFile(source_path, "rb"), File(cache_path, "r+b"), filemap) as cached,
+        pytest.raises(OSError, match="unreadable medium"),
+    ):
+        cached.pread(8, 0)
+
+    assert filemap[0] == STATUS_OK
+    assert filemap[3] == STATUS_OK
+    assert filemap[4] == STATUS_ERROR
+    assert filemap[7] == STATUS_ERROR
