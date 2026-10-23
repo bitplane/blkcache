@@ -15,14 +15,14 @@ NO_SORT = float("nan")
 STATUS_OK = "+"  # Successfully read
 STATUS_ERROR = "-"  # Read error
 STATUS_UNTRIED = "?"  # Not tried yet
-STATUS_TRIMMED = "/"  # Trimmed (not tried because of read error)
-STATUS_SLOW = "*"  # Non-trimmed, non-scraped (slow reads)
+STATUS_TRIMMED = "/"  # Failed region, not yet scraped
+STATUS_SLOW = "*"  # Failed block, not yet trimmed (legacy constant name)
 STATUS_SCRAPED = "#"  # Non-trimmed, scraped (slow reads completed)
 
 # Helper sets for fast status categorization
-CACHED = {STATUS_OK, STATUS_SLOW, STATUS_SCRAPED}  # Have data
+CACHED = {STATUS_OK, STATUS_SCRAPED}  # Have data
 UNCACHED = {STATUS_UNTRIED}  # Need data
-ERROR = {STATUS_ERROR, STATUS_TRIMMED}  # Can't get data
+ERROR = {STATUS_ERROR, STATUS_TRIMMED, STATUS_SLOW}  # Fail without retrying the medium
 STATUSES = CACHED | UNCACHED | ERROR  # All valid statuses
 
 log = logging.getLogger(__name__)

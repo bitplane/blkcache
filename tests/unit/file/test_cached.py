@@ -1,7 +1,10 @@
+import errno
+from io import StringIO
 from pathlib import Path
 
 import pytest
 
+from blkcache.ddrescue import load, save
 from blkcache.file.base import File
 from blkcache.file.cached import CachedFile
 from blkcache.file.filemap import STATUS_ERROR, STATUS_OK, STATUS_UNTRIED, FileMap
@@ -17,8 +20,9 @@ class CountingFile(File):
         return super().pread(count, offset)
 
 
-class BrokenFile(File):
+class BrokenFile(CountingFile):
     def pread(self, count: int, offset: int) -> bytes:
+        self.reads.append((count, offset))
         raise OSError("unreadable medium")
 
 
@@ -129,3 +133,68 @@ def test_mixed_read_error_preserves_cached_range(tmp_path):
     assert filemap[3] == STATUS_OK
     assert filemap[4] == STATUS_ERROR
     assert filemap[7] == STATUS_ERROR
+
+
+def test_failed_read_is_not_retried_even_after_reopening(tmp_path):
+    source_path = tmp_path / "source"
+    cache_path = tmp_path / "cache"
+    source_path.write_bytes(b"abcdefgh")
+    cache_path.write_bytes(b"\0" * 8)
+    source = BrokenFile(source_path, "rb")
+    filemap = FileMap(8)
+    saved_map = StringIO()
+
+    with CachedFile(source, File(cache_path, "r+b"), filemap, lambda: save(saved_map, [], filemap, {})) as cached:
+        with pytest.raises(OSError, match="unreadable medium"):
+            cached.pread(4, 2)
+        for count, offset in [(4, 2), (1, 3), (8, 0)]:
+            with pytest.raises(OSError) as error:
+                cached.pread(count, offset)
+            assert error.value.errno == errno.EIO
+
+    assert source.reads == [(4, 2)]
+
+    # A fresh handle must also respect errors persisted by the first handle.
+    restored_map = FileMap(8)
+    saved_map.seek(0)
+    load(saved_map, [], restored_map, {})
+    source = CountingFile(source_path, "rb")
+    with CachedFile(source, File(cache_path, "r+b"), restored_map) as cached:
+        with pytest.raises(OSError) as error:
+            cached.pread(4, 2)
+        assert error.value.errno == errno.EIO
+        assert source.reads == []
+        # Untouched regions can still be recovered and then read from cache.
+        assert cached.pread(2, 0) == b"ab"
+        assert cached.pread(2, 6) == b"gh"
+        assert cached.pread(2, 0) == b"ab"
+        assert cached.pread(2, 6) == b"gh"
+    assert source.reads == [(2, 0), (2, 6)]
+
+
+@pytest.mark.parametrize("status", ["-", "*", "/"])
+@pytest.mark.parametrize("bad_offset", [0, 3, 7])
+def test_known_failure_rejects_entire_request_without_io(tmp_path, status, bad_offset):
+    source_path = tmp_path / "source"
+    cache_path = tmp_path / "cache"
+    source_path.write_bytes(b"abcdefgh")
+    cache_path.write_bytes(b"CACHED!!")
+    source = CountingFile(source_path, "rb")
+    cache = CountingFile(cache_path, "r+b")
+    filemap = FileMap(8)
+    filemap[1:3] = STATUS_OK
+    filemap[bad_offset] = status
+    original_transitions = filemap.transitions.copy()
+    saves = []
+
+    with CachedFile(source, cache, filemap, lambda: saves.append(True)) as cached:
+        with pytest.raises(OSError) as error:
+            cached.pread(8, 0)
+        assert error.value.errno == errno.EIO
+        assert source.reads == []
+        assert cache.reads == []
+        assert filemap.transitions == original_transitions
+        assert saves == []
+        # A neighboring good range remains usable despite the failed request.
+        assert cached.pread(2, 1) == b"AC"
+        assert source.reads == []

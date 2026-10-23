@@ -510,7 +510,7 @@ def test_helper_sets():
     """Test helper sets for fast status categorization."""
     # Test CACHED set (have data)
     assert STATUS_OK in CACHED
-    assert STATUS_SLOW in CACHED
+    assert STATUS_SLOW not in CACHED
     assert STATUS_SCRAPED in CACHED
     assert STATUS_TRIMMED not in CACHED  # Trimmed = can't get data
     assert STATUS_UNTRIED not in CACHED
@@ -523,6 +523,7 @@ def test_helper_sets():
 
     # Test ERROR set (can't get data)
     assert STATUS_ERROR in ERROR
+    assert STATUS_SLOW in ERROR
     assert STATUS_TRIMMED in ERROR  # Trimmed areas are skipped
     assert STATUS_OK not in ERROR
     assert STATUS_UNTRIED not in ERROR

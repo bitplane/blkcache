@@ -5,12 +5,13 @@ CacheFile wraps another File and provides read-through caching.
 Opens the backing file in its __enter__ method.
 """
 
+import errno
 import threading
 from collections.abc import Callable
 from pathlib import Path
 
 from .base import File
-from .filemap import CACHED, STATUS_ERROR, STATUS_OK, FileMap
+from .filemap import CACHED, ERROR, STATUS_ERROR, STATUS_OK, FileMap
 
 
 class CachedFile(File):
@@ -67,7 +68,7 @@ class CachedFile(File):
         return self.backing_file.sector_size
 
     def pread(self, count: int, offset: int) -> bytes:
-        """Read valid ranges from the cache and populate misses from the backing file."""
+        """Read cached or untried ranges, failing immediately on known media errors."""
         if count <= 0:
             return b""
 
@@ -77,6 +78,11 @@ class CachedFile(File):
                 return b""
 
             statuses = self.filemap[offset:end]
+            # Reject the whole request before any I/O, even if a failed range
+            # follows untried data. Client retries must not stress damaged media.
+            if any(status in ERROR for _, _, status in statuses):
+                raise OSError(errno.EIO, f"known media error in range [{offset}, {end})")
+
             runs = []
             run_start = offset
             run_status = statuses[0][2]
