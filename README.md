@@ -16,16 +16,25 @@ uvx blkcache /dev/sr0 file.iso
 
 Then point tools at `file.iso` instead of `/dev/sr0`.
 
-## Why?
-
-Copying some CDs and needed a way to do mount in FUSE, dump the filesystem, and
-then `ddrescue /dev/sr0` to get the image if possible. This means it doesn't
-read the disk twice, even if you have a ton of drives attached
-
 ## How?
 
 It uses `nbdkit` to create a Network Block Storage device in Python, mounts it
 using `fuse`, then creates a mmapped disk cache of sectors as they're read.
+
+## Why?
+
+Say you're archiving CDs, DVDs, floppy disks or hard drives that are on their
+last legs.
+
+With this you can mount a cached version of the disk in FUSE, read the parts
+of the filesystem that are important to you, and dump the contents while
+creating a ddrescue image that can be resumed later without unnecessary wear on
+the media or waiting days for it to grind against bad blocks. With identical
+disks or the same media read in different drives, you can merge ddrescue images
+to get a perfect copy.
+
+In my workflow, it's used to speed up imaging disks where I snag the important
+before doing a deep copy that might fail later on.
 
 ## 🔗 Links
 
@@ -37,5 +46,3 @@ using `fuse`, then creates a mmapped disk cache of sectors as they're read.
 ## 🌍 Related
 
 * [🪦 rip](https://github.com/bitplane/rip)
-* [🕷️ scrapers](https://bitplane.net/dev/python/scrapers)
-
